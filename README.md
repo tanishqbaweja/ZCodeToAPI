@@ -184,7 +184,7 @@ upstream ZCode request rather than only changing the text shown in the TUI.
 The compatibility sweep for Claude Code 2.1.287 also explicitly handles
 Anthropic-only commands such as `/fast`, `/deep-research`, `/schedule`,
 `/remote-env`, `/remote-control`, `/usage-credits`, `/extra-usage`,
-Claude Design commands, hosted GitHub/cloud-plugin setup, `/login`, and
+Claude Design commands, hosted GitHub/Slack/cloud-plugin setup, `/login`, and
 `/logout`. See `CLAUDE_PROXY.md` for the full grouped list.
 
 ## How to use a different ZCode account
