@@ -231,11 +231,13 @@ zcode-cli-launcher.cmd claim
 `claim-preview` is read-only and shows the live plan IDs and grant amounts
 returned by `/api/v1/zcode-plan/billing/preview`.
 
-`claim` auto-selects the largest currently claimable GLM-5.3-Flash grant and
-uses ZCode's real `/api/v1/zcode-plan/billing/claim` endpoint. Claims require
-a fresh Aliyun CAPTCHA verification. The launcher uses the official Aliyun SDK
-and attempts traceless verification first; if Aliyun upgrades the attempt to
-an interactive challenge, only the verifier page needs to be completed.
+`claim` prefers the current Trust Build GLM-5.3-Flash grant of at least 100M
+tokens and uses ZCode's real `/api/v1/zcode-plan/billing/claim` endpoint.
+The plan ID is discovered from the live preview instead of being hardcoded.
+Claims require a fresh Aliyun CAPTCHA verification. The launcher uses the
+official Aliyun SDK and attempts traceless verification first; if Aliyun
+upgrades the attempt to an interactive challenge, only the verifier page needs
+to be completed.
 
 For automation that already has a fresh verification value:
 

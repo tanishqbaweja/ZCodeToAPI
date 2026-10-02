@@ -110,6 +110,7 @@ GET  /v1/models
 GET  /v1/models/{model}
 GET  /v1/zcode/balance
 GET  /v1/zcode/claim-preview
+GET  /v1/zcode/claim/preview
 GET  /v1/usage
 POST /v1/chat/completions
 POST /v1/responses
@@ -131,20 +132,23 @@ desktop client before it shows a Claim action.
   "plan_id": "optional exact preview plan id",
   "captcha_verify_param": "optional fresh Aliyun verification value",
   "captcha_region": "optional region override",
-  "interactive_verification": false,
+  "auto_verify": false,
   "verification_timeout": 120
 }
 ```
 
-When `plan_id` is omitted, ZCodeToAPI picks the largest currently claimable
-GLM-5.3-Flash grant from the live preview. When the CAPTCHA value is omitted
-and `interactive_verification` is false, the proxy returns HTTP 428 with
-`captcha_required: true`. On a local desktop, setting
-`interactive_verification: true` runs the same official Aliyun SDK flow used
-by ZCode in a small local browser page. The verifier attempts Aliyun's
-traceless flow automatically; user interaction is only needed if Aliyun
-escalates that attempt to a challenge. The ZCode desktop app does not need to
-be opened.
+When `plan_id` is omitted, ZCodeToAPI prefers a Trust Build
+GLM-5.3-Flash grant of at least 100M tokens, then falls back to the
+highest-priority/largest claimable Flash grant from the live preview. When the
+CAPTCHA value is omitted and `auto_verify` is false, the proxy returns HTTP
+428 with `captcha_required: true`. On a local desktop, setting
+`auto_verify: true` runs the same official Aliyun SDK flow used by ZCode in a
+small local browser page. The verifier attempts Aliyun's traceless flow
+automatically; user interaction is only needed if Aliyun escalates that
+attempt to a challenge. `auto_verify` is intentionally loopback-only; remote
+callers must provide a fresh `captcha_verify_param`. The older
+`interactive_verification` field remains accepted as an alias. The ZCode
+desktop app does not need to be opened.
 
 The short-lived CAPTCHA verification value is redacted from proxy request
 dumps.

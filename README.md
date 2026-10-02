@@ -162,16 +162,19 @@ They also expose ZCode's manual Start Plan claim flow:
 
 ```text
 GET  /v1/zcode/claim-preview
+GET  /v1/zcode/claim/preview
 POST /v1/zcode/claim
 ```
 
 The preview endpoint discovers the currently claimable plan from ZCode instead
 of hardcoding a promotional plan ID. The claim endpoint accepts an optional
-`plan_id`; when omitted, it selects the largest currently claimable
-GLM-5.3-Flash grant. If a fresh Aliyun verification value is not supplied, the
-API returns `428` with `captcha_required: true`. For a local desktop caller,
-send `{"interactive_verification": true}` to run the official Aliyun
-verification flow without opening the ZCode application.
+`plan_id`; when omitted, it prefers the current Trust Build GLM-5.3-Flash
+grant of at least 100M tokens, then falls back to the highest-priority/largest
+claimable Flash grant. If a fresh Aliyun verification value is not supplied,
+the API returns `428` with `captcha_required: true`. For a local desktop
+caller, send `{"auto_verify": true}` to run the official Aliyun verification
+flow without opening the ZCode application. The legacy
+`interactive_verification` field is accepted as an alias.
 
 The launcher exposes the same flow directly:
 
