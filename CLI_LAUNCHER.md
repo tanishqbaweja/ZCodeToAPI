@@ -51,6 +51,21 @@ the heavyweight global plugin cache are not copied into that isolated home.
 Lightweight local capabilities such as AGENTS.md, skills, and rules are seeded
 when available.
 
+The isolated `config.toml` is created once and then preserved. Codex-owned
+changes such as installed plugins therefore survive later launcher sessions.
+The ZCode provider and initial model are enforced per invocation with
+command-line overrides, while the requested initial reasoning effort is reset
+in the isolated config immediately before launch. The native `/model` picker
+can still change model/effort for the active session, and preserving the rest
+of the local config does not allow a stale provider selection to bypass ZCode.
+
+For `/plugins`, the launcher mirrors Codex's existing curated plugin sources
+into one shared ZCodeToAPI-owned marketplace on the project drive. Every
+isolated Codex home points to that shared marketplace instead of copying the
+large global plugin runtime/cache. In live testing Codex showed 49 available
+plugins, and a `superpowers` add/list/remove cycle persisted correctly across
+separate launcher invocations.
+
 Codex keeps its native `/model` UI. The local provider catalog exposes only:
 
 ```text

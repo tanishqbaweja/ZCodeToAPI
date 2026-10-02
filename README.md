@@ -171,6 +171,11 @@ launcher runs the real Codex CLI through a Windows PTY and gives it an isolated
 `CODEX_HOME` under a short path on the project drive. It does not copy OpenAI
 credentials or the normal Codex session database into that home.
 
+That isolated Codex configuration is persistent across launcher runs. Codex's
+own local settings and plugin install state are preserved, while the ZCode
+provider, initial model, and requested reasoning effort are enforced per
+invocation.
+
 Verified with Codex CLI 0.160.0:
 
 - Codex's native `/model` picker lists only `GLM-5.3-Flash` and `GLM-5.3`.
@@ -180,6 +185,10 @@ Verified with Codex CLI 0.160.0:
 - `/usage` is launcher-owned and displays ZCode's real entitlement periods,
   used/remaining units, and reset/expiry time instead of ChatGPT account limits.
 - Normal local Codex commands remain native.
+- `/plugins` remains native and is backed by one shared ZCodeToAPI-owned copy
+  of Codex's existing curated marketplace on the project drive. A live
+  add/list/remove cycle verified plugin state persists across separate launcher
+  invocations without modifying the normal `~/.codex` configuration.
 - OpenAI/ChatGPT-only slash commands such as `/daybreak`, `/apps`,
   `/voice`, `/app`, `/logout`, and `/feedback` are intercepted with a
   clear ZCodeToAPI explanation.

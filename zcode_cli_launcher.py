@@ -389,6 +389,22 @@ def codex_top_level_intercept(raw_args: str | None) -> tuple[str, str, tuple[str
                 continue
         else:
             value = parts[index + 1].strip().strip("'\"").lower()
+        if value.startswith("model="):
+            requested = value.split("=", 1)[1].strip().strip("'\"")
+            if requested not in {"glm-5.3", "glm-5.3-flash", "zcode-glm-5.3-flash"}:
+                return (
+                    "-c/--config model",
+                    f"Unsupported ZCode model: {requested}",
+                    ("Use glm-5.3 or glm-5.3-flash in ZCodeToAPI sessions.",),
+                )
+        if value.startswith("model_reasoning_effort="):
+            requested_effort = value.split("=", 1)[1].strip().strip("'\"")
+            if requested_effort not in {"low", "high", "xhigh"}:
+                return (
+                    "-c/--config model_reasoning_effort",
+                    f"Unsupported ZCode reasoning effort: {requested_effort}",
+                    ("Use low, high, or xhigh (ZCode max) in ZCodeToAPI sessions.",),
+                )
         if value.startswith(protected_config_prefixes):
             return (
                 "-c/--config",
@@ -1566,6 +1582,115 @@ def validate_claude_gateway_auth(args: argparse.Namespace, env: dict[str, str], 
     print("[claude] local gateway auth: logged in (isolated subscription mode)")
 
 
+def prepare_codex_shared_marketplace(project_drive: Path) -> Path | None:
+    """Mirror Codex's curated plugin sources once into ZCodeToAPI-owned storage."""
+    source_root = Path.home() / ".codex" / ".tmp" / "plugins"
+    source_manifest = source_root / ".agents" / "plugins" / "api_marketplace.json"
+    source_plugins = source_root / "plugins"
+    if not source_manifest.is_file() or not source_plugins.is_dir():
+        return None
+
+    try:
+        manifest = json.loads(source_manifest.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("plugins"), list):
+        return None
+
+    source_sha_path = Path.home() / ".codex" / ".tmp" / "plugins.sha"
+    source_sha = ""
+    if source_sha_path.is_file():
+        try:
+            source_sha = source_sha_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            source_sha = ""
+    source_key = {
+        "source_sha": source_sha,
+        "manifest_size": source_manifest.stat().st_size,
+        "manifest_mtime_ns": source_manifest.stat().st_mtime_ns,
+    }
+
+    shared_root = project_drive / "zcta" / "shared" / "curated-plugins"
+    marker_path = shared_root / ".zcodetoapi-source.json"
+    reuse = False
+    if marker_path.is_file() and (shared_root / "plugins").is_dir():
+        try:
+            reuse = json.loads(marker_path.read_text(encoding="utf-8")) == source_key
+        except Exception:
+            reuse = False
+
+    if not reuse:
+        staging = shared_root.with_name(shared_root.name + ".staging")
+        shutil.rmtree(staging, ignore_errors=True)
+        staging.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source_plugins, staging / "plugins", dirs_exist_ok=True)
+
+        local_manifest = json.loads(json.dumps(manifest))
+        local_manifest["name"] = "zcodetoapi-curated"
+        target_manifest = staging / ".agents" / "plugins" / "marketplace.json"
+        target_manifest.parent.mkdir(parents=True, exist_ok=True)
+        target_manifest.write_text(
+            json.dumps(local_manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        (staging / ".zcodetoapi-source.json").write_text(
+            json.dumps(source_key, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        shutil.rmtree(shared_root, ignore_errors=True)
+        staging.rename(shared_root)
+
+    return shared_root
+
+
+def _ensure_toml_key(text: str, section: str, key: str, value: str) -> str:
+    """Add one TOML key without replacing unrelated Codex-owned settings."""
+    header = f"[{section}]"
+    lines = text.splitlines()
+    try:
+        start = lines.index(header)
+    except ValueError:
+        suffix = "" if text.endswith("\n") or not text else "\n"
+        return text + suffix + f"\n{header}\n{key} = {value}\n"
+
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if lines[index].lstrip().startswith("["):
+            end = index
+            break
+    prefix = f"{key} ="
+    for index in range(start + 1, end):
+        if lines[index].strip().startswith(prefix):
+            return text
+    lines.insert(end, f"{key} = {value}")
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+
+
+def _set_toml_top_level_key(text: str, key: str, value: str) -> str:
+    """Set a launcher-managed top-level key while preserving all sections."""
+    lines = text.splitlines()
+    prefix = f"{key} ="
+    first_section = len(lines)
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith("["):
+            first_section = index
+            break
+        if line.strip().startswith(prefix):
+            lines[index] = f"{key} = {value}"
+            return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+    lines.insert(first_section, f"{key} = {value}")
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+
+
+def _ensure_toml_section(text: str, section: str, body: list[str]) -> str:
+    header = f"[{section}]"
+    if any(line.strip() == header for line in text.splitlines()):
+        return text
+    suffix = "" if text.endswith("\n") or not text else "\n"
+    return text + suffix + "\n" + header + "\n" + "\n".join(body) + "\n"
+
+
 def prepare_codex_home(args: argparse.Namespace, out_dir: Path, env: dict[str, str]) -> None:
     # Codex 0.160+ starts a local app-server daemon whose Unix-domain socket
     # lives under CODEX_HOME. Windows enforces a short SUN_LEN path, so the
@@ -1573,6 +1698,7 @@ def prepare_codex_home(args: argparse.Namespace, out_dir: Path, env: dict[str, s
     # but place its writable home in a short path on the project's drive so a
     # test run never consumes the user's system drive.
     project_drive = Path(ROOT.drive + "\\") if ROOT.drive else ROOT
+    shared_marketplace = prepare_codex_shared_marketplace(project_drive)
     home = project_drive / "zcta" / f"p{args.codex_port}"
     home.mkdir(parents=True, exist_ok=True)
     model_id = client_model_id(args.codex_model)
@@ -1598,29 +1724,53 @@ def prepare_codex_home(args: argparse.Namespace, out_dir: Path, env: dict[str, s
     reasoning = {"low": "low", "high": "high", "max": "xhigh"}[args.codex_thinking]
     workdir = str(Path(args.workdir).resolve())
     project_key = json.dumps(workdir)
-    config = (
-        f'model = "{model_id}"\n'
-        f'model_reasoning_effort = "{reasoning}"\n'
-        'model_provider = "zcode-glm"\n'
-        'check_for_update_on_startup = false\n'
-        'suppress_unstable_features_warning = true\n'
-        'sandbox_mode = "workspace-write"\n'
-        'approval_policy = "on-request"\n'
-        'analytics.enabled = false\n\n'
-        '[model_providers.zcode-glm]\n'
-        'name = "ZCode GLM"\n'
-        f'base_url = "http://{args.host}:{args.codex_port}/v1"\n'
-        f'model_catalog_url = "http://{args.host}:{args.codex_port}/v1/codex/models"\n'
-        'env_key = "OPENAI_API_KEY"\n'
-        'wire_api = "responses"\n'
-        'requires_openai_auth = false\n'
-        'supports_websockets = false\n\n'
-        '[features]\n'
-        'api_key_model_discovery = true\n\n'
-        '[windows]\n'
-        'sandbox = "unelevated"\n\n'
-        f'[projects.{project_key}]\n'
-        'trust_level = "trusted"\n'
+    if isolated_config.is_file():
+        config = isolated_config.read_text(encoding="utf-8")
+    else:
+        config = (
+            f'model = "{model_id}"\n'
+            f'model_reasoning_effort = "{reasoning}"\n'
+            'model_provider = "zcode-glm"\n'
+            'check_for_update_on_startup = false\n'
+            'suppress_unstable_features_warning = true\n'
+            'sandbox_mode = "workspace-write"\n'
+            'approval_policy = "on-request"\n'
+            'analytics.enabled = false\n\n'
+            '[model_providers.zcode-glm]\n'
+            'name = "ZCode GLM"\n'
+            f'base_url = "http://{args.host}:{args.codex_port}/v1"\n'
+            f'model_catalog_url = "http://{args.host}:{args.codex_port}/v1/codex/models"\n'
+            'env_key = "OPENAI_API_KEY"\n'
+            'wire_api = "responses"\n'
+            'requires_openai_auth = false\n'
+            'supports_websockets = false\n\n'
+            '[features]\n'
+            'api_key_model_discovery = true\n'
+            'plugins = true\n\n'
+            '[windows]\n'
+            'sandbox = "unelevated"\n\n'
+        )
+
+    config = _ensure_toml_key(config, "features", "api_key_model_discovery", "true")
+    config = _ensure_toml_key(config, "features", "plugins", "true")
+    config = _set_toml_top_level_key(
+        config,
+        "model_reasoning_effort",
+        json.dumps(reasoning),
+    )
+    if shared_marketplace is not None:
+        config = _ensure_toml_section(
+            config,
+            "marketplaces.zcodetoapi-curated",
+            [
+                'source_type = "local"',
+                f'source = {json.dumps(str(shared_marketplace))}',
+            ],
+        )
+    config = _ensure_toml_section(
+        config,
+        f"projects.{project_key}",
+        ['trust_level = "trusted"'],
     )
     isolated_config.write_text(config, encoding="utf-8")
 
@@ -1631,6 +1781,7 @@ def prepare_codex_home(args: argparse.Namespace, out_dir: Path, env: dict[str, s
             "codex_home": str(home),
             "model": model_id,
             "auth_files_copied": False,
+            "shared_marketplace": str(shared_marketplace) if shared_marketplace else None,
         },
     )
 
