@@ -202,10 +202,23 @@ def summarize_billing_balance(body: dict) -> dict:
         data = {}
     plans = data.get("plans") if isinstance(data.get("plans"), list) else []
     balances = data.get("balances") if isinstance(data.get("balances"), list) else []
+    entitlement_meta: dict[tuple[str, str], dict] = {}
+    for plan in plans:
+        if not isinstance(plan, dict):
+            continue
+        plan_id = str(plan.get("plan_id") or "")
+        for entitlement in plan.get("entitlements") or []:
+            if not isinstance(entitlement, dict):
+                continue
+            entitlement_id = str(entitlement.get("entitlement_id") or "")
+            entitlement_meta[(plan_id, entitlement_id)] = entitlement
     summarized = []
     for balance in balances:
         if not isinstance(balance, dict):
             continue
+        plan_id = str(balance.get("plan_id") or "")
+        entitlement_id = str(balance.get("entitlement_id") or "")
+        entitlement = entitlement_meta.get((plan_id, entitlement_id), {})
         total = int(balance.get("total_units") or 0)
         remaining = int(balance.get("remaining_units") or 0)
         used = int(balance.get("used_units") or max(total - remaining, 0))
@@ -215,6 +228,7 @@ def summarize_billing_balance(body: dict) -> dict:
                 "capabilities": balance.get("capabilities") or [],
                 "plan_id": balance.get("plan_id"),
                 "entitlement_id": balance.get("entitlement_id"),
+                "period": entitlement.get("period"),
                 "total_units": total,
                 "used_units": used,
                 "remaining_units": remaining,
@@ -248,11 +262,14 @@ def summarize_billing_balance(body: dict) -> dict:
 def normalize_thinking_level(value: str | None) -> str:
     raw = (value or os.environ.get("ZCODE_THINKING_LEVEL") or "max").strip().lower()
     aliases = {
+        "none": "low",
         "minimal": "low",
         "medium": "high",
         "normal": "high",
         "default": "max",
         "xhigh": "max",
+        "ultra": "max",
+        "persistent": "max",
         "maximum": "max",
     }
     raw = aliases.get(raw, raw)

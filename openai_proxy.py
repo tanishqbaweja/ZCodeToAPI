@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import mmap
 import os
 import re
 import sys
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
@@ -29,7 +31,129 @@ import zcode_direct_client as zcode
 OPENAI_MODEL = "glm-5.3-flash"
 ZCODE_MODEL = "GLM-5.3-Flash"
 MODEL_ALIASES = ["glm-5.3-flash", "glm-5.3", "GLM-5.3-Flash", "GLM-5.3", "zcode-glm-5.3-flash"]
+PUBLIC_MODELS = ["glm-5.3-flash", "glm-5.3"]
 REQUEST_COUNTER = 0
+
+
+def codex_native_model_messages() -> dict[str, Any]:
+    """Reuse the installed Codex version's own harness prompt metadata."""
+    override = os.environ.get("ZCODE_CODEX_MODELS_CACHE")
+    cache_path = Path(override) if override else Path.home() / ".codex" / "models_cache.json"
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except Exception:
+        payload = {}
+    if isinstance(payload, dict):
+        for model in payload.get("models") or []:
+            if not isinstance(model, dict):
+                continue
+            messages = model.get("model_messages")
+            template = messages.get("instructions_template") if isinstance(messages, dict) else None
+            if isinstance(template, str) and template.strip():
+                return json.loads(json.dumps(messages))
+            base = model.get("base_instructions")
+            if isinstance(base, str) and base.strip():
+                return {"instructions_template": base}
+
+    # A freshly installed Codex may not have populated models_cache.json yet.
+    # Fall back to the exact prompt embedded in the installed native binary,
+    # without copying that prompt into this repository.
+    candidates: list[Path] = []
+    explicit = os.environ.get("ZCODE_CODEX_NATIVE_BIN")
+    if explicit:
+        candidates.append(Path(explicit))
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        package_root = Path(appdata) / "npm" / "node_modules" / "@openai" / "codex"
+        if package_root.is_dir():
+            candidates.extend(package_root.rglob("codex.exe"))
+
+    prefix = b"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."
+    end_marker = (
+        b"If all steps are complete, ensure you call `update_plan` "
+        b"to mark all steps as `completed`."
+    )
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        try:
+            with candidate.open("rb") as handle, mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as data:
+                start = data.find(prefix)
+                if start < 0:
+                    continue
+                marker = data.find(end_marker, start)
+                if marker < 0:
+                    continue
+                end = marker + len(end_marker)
+                while end < len(data) and data[end] in (10, 13):
+                    end += 1
+                template = bytes(data[start:end]).decode("utf-8")
+                if len(template) >= 10_000:
+                    return {"instructions_template": template}
+        except Exception:
+            continue
+
+    raise RuntimeError(
+        "Codex model catalog needs native Codex instructions, but neither "
+        f"{cache_path} nor the installed Codex binary provided them."
+    )
+
+
+def codex_model_catalog() -> dict[str, Any]:
+    model_messages = codex_native_model_messages()
+    reasoning = [
+        {"effort": "low", "description": "Faster reasoning for easier tasks."},
+        {"effort": "high", "description": "Deeper reasoning for harder tasks."},
+        {"effort": "xhigh", "description": "Maximum ZCode reasoning effort."},
+    ]
+
+    def item(slug: str, display_name: str, description: str, priority: int) -> dict[str, Any]:
+        return {
+            "slug": slug,
+            "display_name": display_name,
+            "description": description,
+            "default_reasoning_level": "xhigh",
+            "supported_reasoning_levels": reasoning,
+            "shell_type": "unified_exec",
+            "visibility": "list",
+            "supported_in_api": True,
+            "priority": priority,
+            "availability_nux": None,
+            "upgrade": None,
+            "model_messages": model_messages,
+            "support_verbosity": False,
+            "default_verbosity": None,
+            "apply_patch_tool_type": None,
+            # Codex requires a truncation policy in model metadata. Keep this
+            # comfortably above normal prompt sizes without inventing a ZCode
+            # token-context-window claim.
+            "truncation_policy": {"mode": "bytes", "limit": 10485760},
+            "experimental_supported_tools": [],
+            "include_skills_usage_instructions": False,
+            "include_plugin_usage_instructions": False,
+            "include_apps_usage_instructions": False,
+            "supports_reasoning_summary_parameter": False,
+            "default_reasoning_summary": "auto",
+            "web_search_tool_type": "text",
+            "supports_image_detail_original": False,
+            "context_window": None,
+            "auto_compact_token_limit": None,
+            "effective_context_window_percent": 95,
+            "input_modalities": ["text"],
+            "supports_search_tool": False,
+            "supports_experimental_context": False,
+            "use_responses_lite": False,
+            "supports_reasoning_effort_updates": False,
+            "node_repl_auto_review_required": False,
+            "node_repl_disabled": False,
+        }
+
+    return {
+        "models": [
+            item("glm-5.3-flash", "GLM-5.3-Flash", "Fast ZCode Start Plan model.", 0),
+            item("glm-5.3", "GLM-5.3", "ZCode Start Plan model for deeper coding work.", 1),
+        ]
+    }
 
 
 def next_request_id() -> str:
@@ -232,7 +356,24 @@ def synthesize_tool_call(prompt: str, tools: Any, raw_text: str) -> list[dict[st
     name = command_tool_name(tools)
     if not name:
         return []
-    if any(marker in raw_text.lower() for marker in ("read", "understand", "current structure", "existing")):
+    wants_read = any(
+        marker in raw_text.lower()
+        for marker in ("read", "understand", "current structure", "existing")
+    )
+    if os.name == "nt":
+        command = (
+            "Get-Location; "
+            "Get-ChildItem -Force; "
+            "Get-ChildItem -File -Recurse -ErrorAction SilentlyContinue "
+            "| Select-Object -First 120 -ExpandProperty FullName"
+        )
+        if wants_read:
+            command += (
+                "; foreach ($f in @('index.html','styles.css','src/app.js','src/storage.js','README.md')) "
+                "{ if (Test-Path $f) { Write-Output ('--- ' + $f + ' ---'); "
+                "Get-Content $f -TotalCount 260 } }"
+            )
+    elif wants_read:
         command = (
             "pwd; find . -maxdepth 3 -type f -print 2>/dev/null; "
             "for f in index.html styles.css src/app.js src/storage.js README.md; do "
@@ -241,17 +382,14 @@ def synthesize_tool_call(prompt: str, tools: Any, raw_text: str) -> list[dict[st
         )
     else:
         command = (
-            "pwd; "
-            "find . -maxdepth 3 -type f -print 2>/dev/null; "
-            "ls -la; "
-            "find . -maxdepth 2 -type d -print 2>/dev/null"
+            "pwd; find . -maxdepth 3 -type f -print 2>/dev/null; "
+            "ls -la; find . -maxdepth 2 -type d -print 2>/dev/null"
         )
     return [
         {
             "name": name,
             "arguments": {
                 "cmd": command,
-                "workdir": "/work/app",
                 "yield_time_ms": 10000,
                 "max_output_tokens": 20000,
             },
@@ -406,6 +544,13 @@ def parse_tool_bridge(raw_text: str, *, tools_were_provided: bool) -> tuple[str 
     return raw_text, []
 
 
+def has_explicit_final(raw_text: str) -> bool:
+    parsed = extract_json_object(raw_text)
+    if not isinstance(parsed, dict):
+        return False
+    return isinstance(parsed.get("final"), str) or isinstance(parsed.get("answer"), str)
+
+
 def fallback_tool_call(prompt: str, tools: Any) -> list[dict[str, Any]]:
     names = tool_names(tools)
     if not names:
@@ -526,6 +671,33 @@ def tool_repair_prompt(original_prompt: str, invalid_text: str, tools: Any) -> s
     return "\n".join(parts)
 
 
+def final_answer_repair_prompt(original_prompt: str) -> str:
+    return "\n".join(
+        [
+            "Finish the coding-agent turn now.",
+            "Workspace tools have already run. Do not request or describe another tool call.",
+            "Use the task context and tool outputs below to produce the final user-facing answer.",
+            "If the user requested an exact short reply and the completed tool results support it, follow that request exactly.",
+            "Do not output tool_calls. Do not output markdown fences.",
+            "",
+            "[TASK AND TOOL HISTORY]",
+            original_prompt,
+            "",
+            "Write the final answer now.",
+        ]
+    )
+
+
+def final_text_from_repair(raw_text: str) -> str:
+    parsed = extract_json_object(raw_text)
+    if isinstance(parsed, dict):
+        for key in ("final", "answer"):
+            value = parsed.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return raw_text.strip()
+
+
 def looks_like_tool_intent(text: str) -> bool:
     lowered = text.lower()
     return any(
@@ -578,7 +750,13 @@ class Bridge:
             self.config_at = time.time()
         return self.config
 
-    def call(self, prompt: str, *, thinking_level: str | None = None) -> tuple[str, str, dict[str, Any] | None]:
+    def call(
+        self,
+        prompt: str,
+        *,
+        thinking_level: str | None = None,
+        backend_model: str | None = None,
+    ) -> tuple[str, str, dict[str, Any] | None]:
         token = self.get_token()
         config = self.get_config()
         verification = None
@@ -592,7 +770,7 @@ class Bridge:
             config=config,
             verification=verification,
             prompt=prompt,
-            model=os.environ.get("ZCODE_PROXY_BACKEND_MODEL", ZCODE_MODEL),
+            model=backend_model or os.environ.get("ZCODE_PROXY_BACKEND_MODEL", ZCODE_MODEL),
             timeout=float(os.environ.get("ZCODE_PROXY_REQUEST_TIMEOUT_SECONDS", "120")),
             thinking_level=thinking_level,
         )
@@ -639,6 +817,18 @@ def request_thinking_level(body: dict[str, Any]) -> str:
         if isinstance(effort, str):
             return zcode.normalize_thinking_level(effort)
     return zcode.normalize_thinking_level(os.environ.get("ZCODE_PROXY_THINKING_LEVEL"))
+
+
+def request_backend_model(body: dict[str, Any]) -> str:
+    requested = str(body.get("model") or "").strip().lower()
+    aliases = {
+        "glm-5.3-flash": "GLM-5.3-Flash",
+        "zcode-glm-5.3-flash": "GLM-5.3-Flash",
+        "glm-5.3": "GLM-5.3",
+    }
+    if requested in aliases:
+        return aliases[requested]
+    return os.environ.get("ZCODE_PROXY_BACKEND_MODEL", ZCODE_MODEL)
 
 
 def make_text_response(rid: str, model: str, text: str, usage: dict[str, Any] | None) -> dict[str, Any]:
@@ -780,8 +970,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, {"ok": True, "name": "zcode-openai-compatible-proxy", "version": self.server_version, "thinking_level": zcode.normalize_thinking_level(os.environ.get("ZCODE_PROXY_THINKING_LEVEL"))})
         elif path in {"/v1/zcode/balance", "/zcode/balance", "/v1/usage", "/usage"}:
             self.send_json(200, BRIDGE.balance())
+        elif path in {"/v1/codex/models", "/codex/models"}:
+            self.send_json(200, codex_model_catalog())
         elif path in {"/v1/models", "/models"}:
-            self.send_json(200, {"object": "list", "data": [model_object(mid) for mid in MODEL_ALIASES]})
+            self.send_json(200, {"object": "list", "data": [model_object(mid) for mid in PUBLIC_MODELS]})
         elif path.startswith("/v1/models/") or path.startswith("/models/"):
             prefix = "/v1/models/" if path.startswith("/v1/models/") else "/models/"
             model_id = unquote(path[len(prefix) :])
@@ -818,15 +1010,28 @@ class Handler(BaseHTTPRequestHandler):
     def chat(self, body: dict[str, Any], request_id: str) -> None:
         prompt = chat_prompt(body)
         thinking_level = request_thinking_level(body)
-        raw_text, _reasoning, usage = BRIDGE.call(prompt, thinking_level=thinking_level)
+        backend_model = request_backend_model(body)
+        raw_text, _reasoning, usage = BRIDGE.call(
+            prompt,
+            thinking_level=thinking_level,
+            backend_model=backend_model,
+        )
         final_text, tool_calls = parse_tool_bridge(raw_text, tools_were_provided=bool(body.get("tools")))
         repaired_text = None
-        if body.get("tools") and not tool_calls and not looks_like_completion(raw_text) and (looks_like_tool_intent(raw_text) or not prompt_has_tool_output(prompt)):
-            repaired_text, _repair_reasoning, repair_usage = BRIDGE.call(tool_repair_prompt(prompt, raw_text, body.get("tools")), thinking_level=thinking_level)
+        explicit_final = has_explicit_final(raw_text)
+        if body.get("tools") and not tool_calls and not explicit_final and not looks_like_completion(raw_text) and (looks_like_tool_intent(raw_text) or not prompt_has_tool_output(prompt)):
+            repaired_text, _repair_reasoning, repair_usage = BRIDGE.call(
+                tool_repair_prompt(prompt, raw_text, body.get("tools")),
+                thinking_level=thinking_level,
+                backend_model=backend_model,
+            )
             repair_final, repair_calls = parse_tool_bridge(repaired_text, tools_were_provided=True)
             if repair_calls:
                 final_text, tool_calls, usage = repair_final, repair_calls, repair_usage
-        if body.get("tools") and not tool_calls:
+            elif repair_final is not None and has_explicit_final(repaired_text):
+                final_text, usage = repair_final, repair_usage
+                explicit_final = True
+        if body.get("tools") and not tool_calls and not explicit_final:
             synthetic_calls = synthesize_tool_call(prompt, body.get("tools"), raw_text)
             if synthetic_calls:
                 final_text, tool_calls = None, synthetic_calls
@@ -859,7 +1064,18 @@ class Handler(BaseHTTPRequestHandler):
             "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
             "usage": chat_usage(usage),
         }
-        dump_json("response", request_id, {"raw_model_text": raw_text, "repair_model_text": repaired_text, "parsed_tool_calls": tool_calls, "thinking_level": thinking_level, "response": payload})
+        dump_json(
+            "response",
+            request_id,
+            {
+                "raw_model_text": raw_text,
+                "repair_model_text": repaired_text,
+                "parsed_tool_calls": tool_calls,
+                "thinking_level": thinking_level,
+                "backend_model": backend_model,
+                "response": payload,
+            },
+        )
         if body.get("stream"):
             delta = {"role": "assistant"}
             if tool_calls:
@@ -875,7 +1091,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, payload)
 
     def completions(self, body: dict[str, Any], request_id: str) -> None:
-        raw_text, _reasoning, usage = BRIDGE.call(text_from_content(body.get("prompt")), thinking_level=request_thinking_level(body))
+        thinking_level = request_thinking_level(body)
+        backend_model = request_backend_model(body)
+        raw_text, _reasoning, usage = BRIDGE.call(
+            text_from_content(body.get("prompt")),
+            thinking_level=thinking_level,
+            backend_model=backend_model,
+        )
         payload = {
             "id": "cmpl-" + uuid.uuid4().hex,
             "object": "text_completion",
@@ -884,22 +1106,61 @@ class Handler(BaseHTTPRequestHandler):
             "choices": [{"text": raw_text, "index": 0, "finish_reason": "stop"}],
             "usage": chat_usage(usage),
         }
-        dump_json("response", request_id, {"raw_model_text": raw_text, "response": payload})
+        dump_json(
+            "response",
+            request_id,
+            {
+                "raw_model_text": raw_text,
+                "thinking_level": thinking_level,
+                "backend_model": backend_model,
+                "response": payload,
+            },
+        )
         self.send_json(200, payload)
 
     def handle_responses(self, body: dict[str, Any], request_id: str) -> None:
         prompt = responses_prompt(body)
         thinking_level = request_thinking_level(body)
-        raw_text, _reasoning, usage = BRIDGE.call(prompt, thinking_level=thinking_level)
+        backend_model = request_backend_model(body)
+        raw_text, _reasoning, usage = BRIDGE.call(
+            prompt,
+            thinking_level=thinking_level,
+            backend_model=backend_model,
+        )
         tools_were_provided = bool(body.get("tools"))
         final_text, tool_calls = parse_tool_bridge(raw_text, tools_were_provided=tools_were_provided)
         repaired_text = None
-        if tools_were_provided and not tool_calls and not looks_like_completion(raw_text) and (looks_like_tool_intent(raw_text) or not prompt_has_tool_output(prompt)):
-            repaired_text, _repair_reasoning, repair_usage = BRIDGE.call(tool_repair_prompt(prompt, raw_text, body.get("tools")), thinking_level=thinking_level)
+        final_repair_text = None
+        explicit_final = has_explicit_final(raw_text)
+        if (
+            tools_were_provided
+            and prompt_has_tool_output(prompt)
+            and not raw_text.strip()
+        ):
+            final_repair_text, _final_reasoning, final_repair_usage = BRIDGE.call(
+                final_answer_repair_prompt(prompt),
+                thinking_level=thinking_level,
+                backend_model=backend_model,
+            )
+            repaired_final = final_text_from_repair(final_repair_text)
+            if repaired_final:
+                final_text = repaired_final
+                tool_calls = []
+                usage = final_repair_usage
+                explicit_final = True
+        if tools_were_provided and not tool_calls and not explicit_final and not looks_like_completion(raw_text) and (looks_like_tool_intent(raw_text) or not prompt_has_tool_output(prompt)):
+            repaired_text, _repair_reasoning, repair_usage = BRIDGE.call(
+                tool_repair_prompt(prompt, raw_text, body.get("tools")),
+                thinking_level=thinking_level,
+                backend_model=backend_model,
+            )
             repair_final, repair_calls = parse_tool_bridge(repaired_text, tools_were_provided=True)
             if repair_calls:
                 final_text, tool_calls, usage = repair_final, repair_calls, repair_usage
-        if tools_were_provided and not tool_calls:
+            elif repair_final is not None and has_explicit_final(repaired_text):
+                final_text, usage = repair_final, repair_usage
+                explicit_final = True
+        if tools_were_provided and not tool_calls and not explicit_final:
             synthetic_calls = synthesize_tool_call(prompt, body.get("tools"), raw_text)
             if synthetic_calls:
                 final_text, tool_calls = None, synthetic_calls
@@ -909,7 +1170,19 @@ class Handler(BaseHTTPRequestHandler):
             full = make_tool_response(rid, model, tool_calls, usage)
         else:
             full = make_text_response(rid, model, final_text or raw_text, usage)
-        dump_json("response", request_id, {"raw_model_text": raw_text, "repair_model_text": repaired_text, "parsed_tool_calls": tool_calls, "thinking_level": thinking_level, "response": full})
+        dump_json(
+            "response",
+            request_id,
+            {
+                "raw_model_text": raw_text,
+                "repair_model_text": repaired_text,
+                "final_repair_model_text": final_repair_text,
+                "parsed_tool_calls": tool_calls,
+                "thinking_level": thinking_level,
+                "backend_model": backend_model,
+                "response": full,
+            },
+        )
         if body.get("stream"):
             self.send_sse(response_stream_events(full))
             return

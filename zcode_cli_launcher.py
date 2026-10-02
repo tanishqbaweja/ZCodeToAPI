@@ -15,6 +15,7 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -230,6 +231,62 @@ CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
 }
 
 
+CODEX_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "/daybreak": (
+        "Codex Daybreak is not available through ZCodeToAPI.",
+        ("Codex itself requires a signed-in ChatGPT account and the OpenAI provider for Daybreak.",),
+    ),
+    "/apps": (
+        "OpenAI account apps are not available through ZCodeToAPI.",
+        ("Codex /apps loads the ChatGPT app directory and requires OpenAI account-backed services.",),
+    ),
+    "/voice": (
+        "Codex voice mode is not available through ZCodeToAPI.",
+        ("Voice uses OpenAI realtime/audio services rather than the configured Responses API model provider.",),
+    ),
+    "/app": (
+        "Codex Desktop handoff is disabled in ZCodeToAPI sessions.",
+        ("The Desktop app is a separate OpenAI account surface and cannot be guaranteed to keep this isolated ZCode provider.",),
+    ),
+    "/logout": (
+        "OpenAI logout is intentionally disabled in ZCodeToAPI sessions.",
+        ("The isolated Codex home contains no copied OpenAI auth credentials.",),
+    ),
+    "/feedback": (
+        "OpenAI feedback submission is disabled in ZCodeToAPI sessions.",
+        ("This prevents a gateway session from sending logs or conversation diagnostics to OpenAI maintainers.",),
+    ),
+}
+
+
+CODEX_UNSUPPORTED_TOP_LEVEL: dict[str, tuple[str, tuple[str, ...]]] = {
+    "login": (
+        "OpenAI login is not used by ZCodeToAPI.",
+        ("The launcher authenticates only to the local ZCode compatibility proxy.",),
+    ),
+    "logout": (
+        "OpenAI logout is not used by ZCodeToAPI.",
+        ("The isolated Codex home deliberately contains no OpenAI credentials.",),
+    ),
+    "cloud": (
+        "Codex Cloud tasks are not available through ZCodeToAPI.",
+        ("Cloud tasks use OpenAI's hosted Codex service rather than the local Responses-compatible provider.",),
+    ),
+    "cloud-tasks": (
+        "Codex Cloud tasks are not available through ZCodeToAPI.",
+        ("This is an alias for the OpenAI-hosted cloud task service.",),
+    ),
+    "app": (
+        "Codex Desktop handoff is disabled in ZCodeToAPI sessions.",
+        ("The Desktop app cannot be guaranteed to retain this isolated ZCode provider.",),
+    ),
+    "remote-control": (
+        "Codex remote control is not available through ZCodeToAPI.",
+        ("Pairing and remote-control sessions rely on OpenAI-hosted account/session infrastructure.",),
+    ),
+}
+
+
 def claude_launcher_intercept(typed: str) -> tuple[str, str, str, tuple[str, ...]] | None:
     """Return launcher-owned handling for an exact submitted Claude command."""
     stripped = typed.strip()
@@ -243,6 +300,116 @@ def claude_launcher_intercept(typed: str) -> tuple[str, str, str, tuple[str, ...
         return None
     title, detail = unsupported
     return ("unsupported", command, title, detail)
+
+
+def codex_launcher_intercept(typed: str) -> tuple[str, str, str, tuple[str, ...]] | None:
+    stripped = typed.strip()
+    if not stripped.startswith("/"):
+        return None
+    command = stripped.split(None, 1)[0].lower()
+    if command == "/usage":
+        return ("usage", command, "", ())
+    unsupported = CODEX_UNSUPPORTED_SLASH_COMMANDS.get(command)
+    if unsupported is None:
+        return None
+    title, detail = unsupported
+    return ("unsupported", command, title, detail)
+
+
+def codex_top_level_intercept(raw_args: str | None) -> tuple[str, str, tuple[str, ...]] | None:
+    parts = split_extra(raw_args)
+    if not parts:
+        return None
+    lowered = [part.lower() for part in parts]
+
+    if "--search" in lowered:
+        return (
+            "--search",
+            "OpenAI native web search is not available through ZCodeToAPI.",
+            (
+                "Codex --search uses the upstream Responses provider's server-side web_search tool.",
+                "Use local/MCP/browser search tools instead so the model remains routed through ZCode.",
+            ),
+        )
+    if "--oss" in lowered or "--local-provider" in lowered or any(
+        part.startswith("--local-provider=") for part in lowered
+    ):
+        return (
+            "--oss/--local-provider",
+            "Switching Codex away from the ZCode provider is disabled in this launcher.",
+            ("Run a normal Codex session directly when you intentionally want an OSS/local provider.",),
+        )
+    if (
+        "--remote" in lowered
+        or "--remote-auth-token-env" in lowered
+        or any(
+            part.startswith("--remote=") or part.startswith("--remote-auth-token-env=")
+            for part in lowered
+        )
+    ):
+        return (
+            "--remote",
+            "Remote Codex app-server routing is disabled in ZCodeToAPI sessions.",
+            ("A remote app server can bypass this launcher's isolated ZCode provider and local proxy.",),
+        )
+
+    for index, part in enumerate(lowered):
+        if part in {"--model", "-m"} and index + 1 < len(parts):
+            requested = parts[index + 1].strip().lower()
+            if requested not in {"glm-5.3", "glm-5.3-flash", "zcode-glm-5.3-flash"}:
+                return (
+                    "--model",
+                    f"Unsupported ZCode model: {parts[index + 1]}",
+                    ("Use glm-5.3 or glm-5.3-flash in ZCodeToAPI sessions.",),
+                )
+        elif part.startswith("--model="):
+            requested = part.split("=", 1)[1].strip()
+            if requested not in {"glm-5.3", "glm-5.3-flash", "zcode-glm-5.3-flash"}:
+                return (
+                    "--model",
+                    f"Unsupported ZCode model: {parts[index].split('=', 1)[1]}",
+                    ("Use glm-5.3 or glm-5.3-flash in ZCodeToAPI sessions.",),
+                )
+
+    protected_config_prefixes = (
+        "model_provider=",
+        "model_providers.zcode-glm.base_url=",
+        "model_providers.zcode-glm.wire_api=",
+        "model_providers.zcode-glm.env_key=",
+        "model_providers.zcode-glm.requires_openai_auth=",
+        "model_providers.zcode-glm.model_catalog_url=",
+    )
+    for index, part in enumerate(lowered):
+        if part not in {"-c", "--config"} or index + 1 >= len(parts):
+            if part.startswith("--config="):
+                value = part.split("=", 1)[1].strip().strip("'\"").lower()
+            elif part.startswith("-c") and len(part) > 2:
+                value = part[2:].strip().strip("'\"").lower()
+            else:
+                continue
+        else:
+            value = parts[index + 1].strip().strip("'\"").lower()
+        if value.startswith(protected_config_prefixes):
+            return (
+                "-c/--config",
+                "Overriding the ZCode provider route is disabled in this launcher.",
+                ("Provider-independent Codex config overrides remain available.",),
+            )
+
+    command = parts[0].lower()
+    unsupported = CODEX_UNSUPPORTED_TOP_LEVEL.get(command)
+    if unsupported is not None:
+        return (command, unsupported[0], unsupported[1])
+    if command == "exec-server" and (
+        (len(parts) >= 2 and parts[1].lower() == "forward")
+        or "--remote" in set(lowered[1:])
+    ):
+        return (
+            "exec-server remote registration",
+            "Registering OpenAI remote environments is not available through ZCodeToAPI.",
+            ("The local exec-server itself remains available; only its hosted remote-environment registration is blocked.",),
+        )
+    return None
 
 
 def client_model_id(backend_model: str) -> str:
@@ -397,21 +564,26 @@ def _format_reset(value: Any) -> str:
             return "unknown"
 
 
-def zcode_usage_screen(data: dict[str, Any] | None, selected_model: str | None = None) -> str:
-    """Render exact ZCode quotas without Claude's misleading weekly labels."""
+def zcode_usage_screen(
+    data: dict[str, Any] | None,
+    selected_model: str | None = None,
+    *,
+    return_label: str = "CLI",
+) -> str:
+    """Render exact ZCode quota buckets instead of host subscription limits."""
     lines = [
         "\x1b[2J\x1b[H",
         "ZCode Usage",
         "===========",
         "",
-        "Daily model limits",
+        "Model limits",
         "",
     ]
     if not data:
-        lines += ["Usage data is unavailable.", "", "R refresh   Esc return to Claude Code"]
+        lines += ["Usage data is unavailable.", "", f"R refresh   Esc return to {return_label}"]
         return "\r\n".join(lines)
     if "error" in data:
-        lines += [f"Unable to fetch ZCode quota: {data['error']}", "", "R refresh   Esc return to Claude Code"]
+        lines += [f"Unable to fetch ZCode quota: {data['error']}", "", f"R refresh   Esc return to {return_label}"]
         return "\r\n".join(lines)
 
     groups: dict[str, list[dict[str, Any]]] = {}
@@ -433,6 +605,13 @@ def zcode_usage_screen(data: dict[str, Any] | None, selected_model: str | None =
         for row in rows:
             plan_id = str(row.get("plan_id") or "")
             plan = "Trust Build Promo" if "trust" in plan_id.lower() else "Start Plan"
+            period = str(row.get("period") or "").strip().lower()
+            period_label = {
+                "daily": "Daily",
+                "one_time": "One-time",
+                "weekly": "Weekly",
+                "monthly": "Monthly",
+            }.get(period, period.replace("_", " ").title() if period else "Current period")
             total = int(row.get("total_units") or 0)
             used = int(row.get("used_units") or 0)
             remaining = int(row.get("remaining_units") or 0)
@@ -441,19 +620,19 @@ def zcode_usage_screen(data: dict[str, Any] | None, selected_model: str | None =
             bar_width = 32
             filled = min(bar_width, max(0, round(bar_width * percent / 100.0)))
             bar = "#" * filled + "-" * (bar_width - filled)
-            lines.append(f"  {plan} — Daily")
+            lines.append(f"  {plan} — {period_label}")
             lines.append(f"  [{bar}] {percent:5.1f}% used")
             lines.append(
                 f"  {_format_units(used)} / {_format_units(total)} used"
                 f"   ·   {_format_units(remaining)} remaining"
             )
-            lines.append(f"  Resets {reset}")
+            lines.append(f"  {'Expires' if period == 'one_time' else 'Resets'} {reset}")
             lines.append("")
 
     lines += [
-        "These are ZCode's real model buckets; they are not Claude's 5-hour/weekly limits.",
+        "These are ZCode's real model buckets, not the host CLI's account/subscription limits.",
         "",
-        "R refresh   Esc return to Claude Code",
+        f"R refresh   Esc return to {return_label}",
     ]
     return "\r\n".join(lines)
 
@@ -649,6 +828,7 @@ def start_proxy(kind: str, host: str, port: int, thinking: str, backend_model: s
         env["ZCODE_PROXY_THINKING_LEVEL"] = thinking
         env["ZCODE_PROXY_BACKEND_MODEL"] = backend_model
         env["ZCODE_PROXY_DUMP_DIR"] = str(out_dir / "codex-proxy-dumps")
+        env["ZCODE_PROXY_API_KEY"] = "local"
     else:
         script = "claude_proxy.py"
         env["ZCODE_CLAUDE_THINKING_LEVEL"] = thinking
@@ -692,10 +872,15 @@ def child_env(args: argparse.Namespace, kind: str, out_dir: Path) -> dict[str, s
     if kind == "codex":
         env["OPENAI_BASE_URL"] = f"http://{args.host}:{args.codex_port}/v1"
         env["OPENAI_API_KEY"] = args.proxy_api_key
-        env["OPENAI_MODEL"] = client_model_id(args.codex_model)
+        # The initial model is supplied on Codex's command line. Do not pin an
+        # OPENAI_MODEL environment override: /model must be able to become the
+        # real request model and therefore the real ZCode backend model.
+        env.pop("OPENAI_MODEL", None)
         env["ZCODE_PROXY_BACKEND_MODEL"] = args.codex_model
         env["ZCODE_PROXY_THINKING_LEVEL"] = args.codex_thinking
         env["ZCODE_PROXY_DUMP_DIR"] = str(out_dir / "codex-proxy-dumps")
+        if env.get("TERM", "").lower() in {"", "dumb"}:
+            env["TERM"] = "xterm-256color"
     else:
         env["ANTHROPIC_BASE_URL"] = f"http://{args.host}:{args.claude_port}"
         env["CLAUDE_CODE_CUSTOM_OAUTH_URL"] = args.claude_oauth_base
@@ -798,11 +983,36 @@ def prepare_claude_config_dir(out_dir: Path, workdir: Path) -> Path:
 
 
 def codex_command(args: argparse.Namespace, prompt: str | None) -> list[str]:
+    model_id = client_model_id(args.codex_model)
+    provider_overrides = [
+        "-c", 'model_provider="zcode-glm"',
+        "-c", 'model_providers.zcode-glm.name="ZCode GLM"',
+        "-c", f'model_providers.zcode-glm.base_url="http://{args.host}:{args.codex_port}/v1"',
+        "-c", f'model_providers.zcode-glm.model_catalog_url="http://{args.host}:{args.codex_port}/v1/codex/models"',
+        "-c", 'model_providers.zcode-glm.env_key="OPENAI_API_KEY"',
+        "-c", 'model_providers.zcode-glm.wire_api="responses"',
+        "-c", "model_providers.zcode-glm.requires_openai_auth=false",
+        "-c", "features.api_key_model_discovery=true",
+        "-c", "check_for_update_on_startup=false",
+        "-c", "analytics.enabled=false",
+        "-c", "suppress_unstable_features_warning=true",
+    ]
+    cmd = [args.codex_bin, "--no-daemon", "--model", model_id, *provider_overrides]
     if args.codex_args:
-        return [args.codex_bin] + split_extra(args.codex_args)
+        return cmd + split_extra(args.codex_args)
     if args.interactive_cli:
-        return [args.codex_bin]
-    cmd = [args.codex_bin, "exec", "--model", client_model_id(args.codex_model)]
+        return cmd
+    # Noninteractive Codex defaults to a read-only sandbox and cannot pause
+    # for approvals. Allow writes inside the requested workspace while keeping
+    # paths outside it protected by the sandbox.
+    cmd.extend([
+        "--sandbox",
+        "workspace-write",
+        "--ask-for-approval",
+        "never",
+        "exec",
+        "--skip-git-repo-check",
+    ])
     if prompt:
         cmd.append(prompt)
     return cmd
@@ -839,6 +1049,10 @@ def claude_command(args: argparse.Namespace) -> list[str]:
 
 
 def run_child(name: str, cmd: list[str], env: dict[str, str], cwd: Path, stdin_text: str | None, out_dir: Path) -> int:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     resolved = shutil.which(cmd[0])
     if not resolved:
         print(f"[{name}] CLI not found: {cmd[0]}. Pass --{name}-bin or add it to PATH.")
@@ -851,11 +1065,22 @@ def run_child(name: str, cmd: list[str], env: dict[str, str], cwd: Path, stdin_t
     print(f"[{name}] cwd={cwd}")
     print(f"[{name}] command={' '.join(cmd)}")
     with (out_dir / f"{name}.log").open("w", encoding="utf-8") as log:
+        child_stdin: Any
+        if stdin_text is not None:
+            child_stdin = subprocess.PIPE
+        elif name == "codex":
+            # Codex 0.160+ treats inherited non-TTY stdin as additional prompt
+            # content and waits for EOF even when PROMPT was supplied on argv.
+            # Launcher-managed noninteractive runs have no extra stdin, so
+            # close it explicitly instead of inheriting our host pipe.
+            child_stdin = subprocess.DEVNULL
+        else:
+            child_stdin = None
         proc = subprocess.Popen(
             cmd,
             cwd=str(cwd),
             env=env,
-            stdin=subprocess.PIPE if stdin_text is not None else None,
+            stdin=child_stdin,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -913,7 +1138,10 @@ def run_claude_interactive_pty(cmd: list[str], env: dict[str, str], cwd: Path, o
 
     size = shutil.get_terminal_size((140, 40))
     rows, columns = max(20, size.lines), max(80, size.columns)
-    proc = PtyProcess.spawn(cmd, cwd=str(cwd), env=env, dimensions=(rows, columns))
+    child_env = dict(env)
+    if child_env.get("TERM", "").strip().lower() in {"", "dumb"}:
+        child_env["TERM"] = "xterm-256color"
+    proc = PtyProcess.spawn(cmd, cwd=str(cwd), env=child_env, dimensions=(rows, columns))
     overlay = threading.Event()
     overlay_kind = ""
     finished = threading.Event()
@@ -952,7 +1180,11 @@ def run_claude_interactive_pty(cmd: list[str], env: dict[str, str], cwd: Path, o
         nonlocal overlay_kind
         overlay_kind = "usage"
         overlay.set()
-        screen = zcode_usage_screen(usage_snapshot(), env.get("ZCODE_CLAUDE_BACKEND_MODEL"))
+        screen = zcode_usage_screen(
+            usage_snapshot(),
+            env.get("ZCODE_CLAUDE_BACKEND_MODEL"),
+            return_label="Claude Code",
+        )
         log.write("\n\n[LAUNCHER /usage OVERLAY]\n" + screen + "\n[END OVERLAY]\n")
         log.flush()
         emit(screen)
@@ -1086,6 +1318,192 @@ def run_claude_interactive_pty(cmd: list[str], env: dict[str, str], cwd: Path, o
     return int(exit_status) if isinstance(exit_status, int) else 0
 
 
+def run_codex_interactive_pty(cmd: list[str], env: dict[str, str], cwd: Path, out_dir: Path) -> int:
+    """Relay the real Codex TUI through a Windows PTY.
+
+    Codex validates that stdin is attached to a terminal. Desktop automation
+    and nested launcher shells often expose pipe-like stdio instead, so use the
+    same WinPTY bridge we rely on for Claude rather than weakening Codex's TTY
+    checks.
+    """
+    import msvcrt
+    from winpty import PtyProcess
+
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+    size = shutil.get_terminal_size((140, 40))
+    rows, columns = max(20, size.lines), max(80, size.columns)
+    child_env = dict(env)
+    if child_env.get("TERM", "").strip().lower() in {"", "dumb"}:
+        child_env["TERM"] = "xterm-256color"
+    proc = PtyProcess.spawn(cmd, cwd=str(cwd), env=child_env, dimensions=(rows, columns))
+    overlay = threading.Event()
+    overlay_kind = ""
+    finished = threading.Event()
+    output_lock = threading.Lock()
+    log_path = out_dir / "codex-tui.log"
+    log = log_path.open("w", encoding="utf-8", errors="replace")
+
+    def emit(value: str) -> None:
+        with output_lock:
+            sys.stdout.write(value)
+            sys.stdout.flush()
+
+    def reader() -> None:
+        try:
+            while proc.isalive():
+                try:
+                    value = proc.read(1024)
+                except Exception:
+                    break
+                if not value:
+                    continue
+                log.write(value)
+                log.flush()
+                if not overlay.is_set():
+                    emit(value)
+        finally:
+            finished.set()
+
+    thread = threading.Thread(target=reader, name="codex-zcode-pty-reader", daemon=True)
+    thread.start()
+
+    line: list[str] = []
+    line_is_simple = True
+
+    def show_usage() -> None:
+        nonlocal overlay_kind
+        overlay_kind = "usage"
+        overlay.set()
+        screen = zcode_usage_screen(
+            usage_snapshot(),
+            env.get("ZCODE_PROXY_BACKEND_MODEL"),
+            return_label="Codex",
+        )
+        log.write("\n\n[LAUNCHER CODEX /usage OVERLAY]\n" + screen + "\n[END OVERLAY]\n")
+        log.flush()
+        emit(screen)
+
+    def show_unsupported(command: str, title: str, detail: tuple[str, ...]) -> None:
+        nonlocal overlay_kind
+        overlay_kind = "unsupported"
+        overlay.set()
+        lines = [
+            "\x1b[2J\x1b[H",
+            "ZCodeToAPI",
+            "==========",
+            "",
+            title,
+            "",
+            *detail,
+            "",
+            f"Command: {command}",
+            "",
+            "Esc return to Codex",
+        ]
+        screen = "\r\n".join(lines)
+        log.write(
+            f"\n\n[LAUNCHER CODEX UNSUPPORTED COMMAND {command}]\n"
+            + screen
+            + "\n[END OVERLAY]\n"
+        )
+        log.flush()
+        emit(screen)
+
+    def leave_overlay() -> None:
+        nonlocal overlay_kind
+        overlay.clear()
+        overlay_kind = ""
+        emit("\x1b[2J\x1b[H")
+        try:
+            # A brief resize round-trip forces ratatui to repaint without
+            # sending a potentially meaningful key chord into Codex.
+            proc.setwinsize(max(20, rows - 1), columns)
+            proc.setwinsize(rows, columns)
+        except Exception:
+            pass
+
+    try:
+        while proc.isalive() and not finished.is_set():
+            if not msvcrt.kbhit():
+                time.sleep(0.02)
+                continue
+            ch = msvcrt.getwch()
+            if overlay.is_set():
+                if ch in {"\x1b", "q", "Q"}:
+                    leave_overlay()
+                elif overlay_kind == "usage" and ch in {"r", "R"}:
+                    show_usage()
+                continue
+            if ch in {"\x00", "\xe0"}:
+                code = msvcrt.getwch()
+                sequence = _windows_extended_key_sequence(code)
+                if sequence:
+                    proc.write(sequence)
+                line_is_simple = False
+                continue
+
+            if ch in {"\r", "\n"}:
+                typed = "".join(line).strip() if line_is_simple else ""
+                intercept = codex_launcher_intercept(typed)
+                if intercept:
+                    proc.write("\x15")
+                    time.sleep(0.05)
+                    line.clear()
+                    line_is_simple = True
+                    if intercept[0] == "usage":
+                        show_usage()
+                    else:
+                        show_unsupported(intercept[1], intercept[2], intercept[3])
+                    continue
+                proc.write("\r")
+                line.clear()
+                line_is_simple = True
+                continue
+
+            if ch in {"\x08", "\x7f"}:
+                proc.write(ch)
+                if line_is_simple and line:
+                    line.pop()
+                continue
+            if ch == "\x15":
+                proc.write(ch)
+                line.clear()
+                line_is_simple = True
+                continue
+
+            proc.write(ch)
+            if ch == "\x03":
+                line.clear()
+                line_is_simple = True
+            elif ord(ch) >= 32 and line_is_simple:
+                line.append(ch)
+            elif ord(ch) < 32:
+                line_is_simple = False
+    except KeyboardInterrupt:
+        try:
+            proc.write("\x03")
+        except Exception:
+            pass
+    finally:
+        if overlay.is_set():
+            overlay.clear()
+            emit("\x1b[2J\x1b[H")
+        if proc.isalive():
+            try:
+                proc.terminate(force=True)
+            except Exception:
+                pass
+        thread.join(timeout=2)
+        log.close()
+
+    exit_status = getattr(proc, "exitstatus", 0)
+    return int(exit_status) if isinstance(exit_status, int) else 0
+
+
 def run_child_interactive(name: str, cmd: list[str], env: dict[str, str], cwd: Path, out_dir: Path) -> int:
     resolved = shutil.which(cmd[0])
     if not resolved:
@@ -1105,6 +1523,8 @@ def run_child_interactive(name: str, cmd: list[str], env: dict[str, str], cwd: P
     print("Exit the CLI normally to return to this launcher.\n")
     if name == "claude" and os.name == "nt":
         code = run_claude_interactive_pty(cmd, env, cwd, out_dir)
+    elif name == "codex" and os.name == "nt":
+        code = run_codex_interactive_pty(cmd, env, cwd, out_dir)
     else:
         code = subprocess.call(cmd, cwd=str(cwd), env=env)
     (out_dir / f"{name}-exit.txt").write_text(f"EXIT:{code}\n", encoding="utf-8")
@@ -1139,20 +1559,72 @@ def validate_claude_gateway_auth(args: argparse.Namespace, env: dict[str, str], 
 
 
 def prepare_codex_home(args: argparse.Namespace, out_dir: Path, env: dict[str, str]) -> None:
-    home = out_dir / "codex-home"
+    # Codex 0.160+ starts a local app-server daemon whose Unix-domain socket
+    # lives under CODEX_HOME. Windows enforces a short SUN_LEN path, so the
+    # deeply nested recovery-log directory is too long. Keep Codex isolated,
+    # but place its writable home in a short path on the project's drive so a
+    # test run never consumes the user's system drive.
+    project_drive = Path(ROOT.drive + "\\") if ROOT.drive else ROOT
+    home = project_drive / "zcta" / f"p{args.codex_port}"
     home.mkdir(parents=True, exist_ok=True)
     model_id = client_model_id(args.codex_model)
+    source = Path.home() / ".codex"
+    seed_marker = home / ".zcodetoapi-seeded-v2"
+    if not seed_marker.exists():
+        for name in ("AGENTS.md",):
+            src = source / name
+            if src.is_file():
+                shutil.copy2(src, home / name)
+        # Copy only lightweight local capabilities. The plugin cache can be
+        # hundreds of megabytes and Codex can rebuild/discover it on demand.
+        for name in ("skills", "rules"):
+            src = source / name
+            if src.is_dir():
+                shutil.copytree(src, home / name, dirs_exist_ok=True)
+        # Deliberately never copy auth.json, .credentials.json, OAuth state,
+        # sessions, or app-server sockets/daemons from the user's normal
+        # Codex home.
+        seed_marker.write_text("seeded without auth\n", encoding="utf-8")
+
+    isolated_config = home / "config.toml"
+    reasoning = {"low": "low", "high": "high", "max": "xhigh"}[args.codex_thinking]
+    workdir = str(Path(args.workdir).resolve())
+    project_key = json.dumps(workdir)
     config = (
         f'model = "{model_id}"\n'
-        'model_provider = "zcode-glm"\n\n'
+        f'model_reasoning_effort = "{reasoning}"\n'
+        'model_provider = "zcode-glm"\n'
+        'check_for_update_on_startup = false\n'
+        'suppress_unstable_features_warning = true\n'
+        'sandbox_mode = "workspace-write"\n'
+        'approval_policy = "on-request"\n'
+        'analytics.enabled = false\n\n'
         '[model_providers.zcode-glm]\n'
         'name = "ZCode GLM"\n'
         f'base_url = "http://{args.host}:{args.codex_port}/v1"\n'
+        f'model_catalog_url = "http://{args.host}:{args.codex_port}/v1/codex/models"\n'
+        'env_key = "OPENAI_API_KEY"\n'
         'wire_api = "responses"\n'
         'requires_openai_auth = false\n'
+        'supports_websockets = false\n\n'
+        '[features]\n'
+        'api_key_model_discovery = true\n\n'
+        '[windows]\n'
+        'sandbox = "unelevated"\n\n'
+        f'[projects.{project_key}]\n'
+        'trust_level = "trusted"\n'
     )
-    (home / "config.toml").write_text(config, encoding="utf-8")
+    isolated_config.write_text(config, encoding="utf-8")
+
     env["CODEX_HOME"] = str(home)
+    save_json(
+        out_dir / "codex-runtime.json",
+        {
+            "codex_home": str(home),
+            "model": model_id,
+            "auth_files_copied": False,
+        },
+    )
 
 
 def run_one(kind: str, args: argparse.Namespace, out_dir: Path, prompt: str | None) -> int:
@@ -1163,6 +1635,18 @@ def run_one(kind: str, args: argparse.Namespace, out_dir: Path, prompt: str | No
     before = usage_snapshot()
     save_json(out_dir / f"{kind}-usage-before.json", before)
     try:
+        if kind == "codex" and args.codex_args:
+            unsupported = codex_top_level_intercept(args.codex_args)
+            if unsupported:
+                command, title, detail = unsupported
+                print(f"[codex] {title}")
+                for line in detail:
+                    print(f"  {line}")
+                save_json(
+                    out_dir / "codex-unsupported-command.json",
+                    {"command": command, "title": title, "detail": list(detail)},
+                )
+                return 2
         if kind == "claude":
             runtime, oauth_base = prepare_claude_compat_runtime(args, out_dir)
             args.claude_runtime_bin = runtime
@@ -1175,7 +1659,7 @@ def run_one(kind: str, args: argparse.Namespace, out_dir: Path, prompt: str | No
                 time.sleep(3600)
         workdir = Path(args.workdir).resolve()
         env = child_env(args, kind, out_dir)
-        if kind == "codex" and args.interactive_cli:
+        if kind == "codex":
             prepare_codex_home(args, out_dir, env)
         if kind == "claude":
             validate_claude_gateway_auth(args, env, workdir, out_dir)

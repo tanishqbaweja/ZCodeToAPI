@@ -152,7 +152,7 @@ The proxy exposes ZCode quota at:
 http://127.0.0.1:8787/v1/zcode/balance
 ```
 
-This includes all active buckets, including promotional Trust Build buckets such as a 100,000,000 token GLM-5.3-Flash bucket, plus the normal Start Plan GLM-5.3 and GLM-5.3-Flash buckets. Each balance includes `total_units`, `used_units`, `remaining_units`, `percentage_remaining`, `plan_id`, and `expires_at`.
+This includes all active buckets, including promotional Trust Build buckets such as a 100,000,000 token GLM-5.3-Flash bucket, plus the normal Start Plan GLM-5.3 and GLM-5.3-Flash buckets. Each balance includes `total_units`, `used_units`, `remaining_units`, `percentage_remaining`, `plan_id`, `period`, and `expires_at`.
 
 ## Streaming
 
@@ -166,13 +166,39 @@ That is enough for many tools, but not a perfect OpenAI streaming clone.
 
 Codex-style tools usually need a custom OpenAI-compatible base URL and a Responses API wire mode.
 
+When Codex is launched through `zcode-cli-launcher.cmd`, the proxy also serves
+a Codex model catalog. This lets Codex keep its own native `/model` picker
+while showing only the real ZCode models:
+
+```text
+glm-5.3-flash
+glm-5.3
+```
+
+The catalog exposes Codex reasoning levels `low`, `high`, and `xhigh`;
+`xhigh` maps to ZCode `max`. The proxy reads the model and
+`reasoning.effort` from every request, so a model/effort change made inside
+Codex changes the actual ZCode backend request rather than just the UI.
+
+The Codex catalog reuses the installed Codex version's own model instruction
+metadata (or, when needed, its embedded fallback coding instructions) at
+runtime. Those instructions are not copied into this repository.
+
+When the launcher owns the interactive TUI, its exact `/usage` command shows
+these ZCode buckets directly rather than opening Codex's ChatGPT-account usage
+screen. Normal Start Plan entitlements are shown as daily; a one-time promo is
+shown as one-time with an expiry timestamp.
+
 For Codex CLI config, add something like this to your Codex config file:
 
 ```toml
 [model_providers.zcode-glm]
-name = "ZCode GLM 5.3 Flash"
+name = "ZCode GLM"
 base_url = "http://127.0.0.1:8787/v1"
+model_catalog_url = "http://127.0.0.1:8787/v1/codex/models"
+env_key = "OPENAI_API_KEY"
 wire_api = "responses"
+requires_openai_auth = false
 
 [profiles.zcode-glm]
 model_provider = "zcode-glm"
@@ -228,6 +254,9 @@ Each request creates files like:
 - It keeps the stock ZCode request template because that is what the backend currently accepts.
 - It maps OpenAI messages into a plain-text prompt before sending them to ZCode.
 - It supports practical Responses API `function_call` bridging for Codex-style tools, including repair/fallback for planning text.
+- OpenAI's server-side Responses `web_search` tool is not implemented. The
+  ZCodeToAPI Codex launcher therefore rejects native `--search`; use local,
+  browser, or MCP search tools instead.
 - True token-by-token streaming is not implemented yet.
 - Function calling is a prompt-to-JSON bridge rather than native model-side tool calling.
 - If ZCode changes its backend validation, this proxy may need updates.

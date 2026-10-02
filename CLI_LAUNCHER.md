@@ -33,21 +33,79 @@ The launcher also passes the chosen values to Claude Code itself with `--model` 
 
 ### Claude `/usage`
 
-The Claude proxy maps the selected model's live ZCode balance into Claude Code's native OAuth usage schema and unified rate-limit state. The launcher-local Claude runtime requests the local bridge directly:
+The local OAuth bridge still provides Claude's internal profile/usage state,
+but Claude's built-in usage page labels its windows with Anthropic-specific
+5-hour/week terminology. ZCode's actual Start Plan limits are daily. The
+launcher therefore intercepts the exact `/usage` command and renders the real
+ZCode buckets itself, including used, remaining, total, and reset times.
+
+### Codex interactive compatibility
+
+On Windows, Codex 0.160.0 is relayed through WinPTY so its real interactive TUI
+works even when the parent shell is not a usable terminal.
+
+Codex uses a short isolated `CODEX_HOME` on the same drive as the project.
+This avoids Windows app-server socket path limits and avoids filling the
+system drive. Normal OpenAI auth, global state, saved sessions, sockets, and
+the heavyweight global plugin cache are not copied into that isolated home.
+Lightweight local capabilities such as AGENTS.md, skills, and rules are seeded
+when available.
+
+Codex keeps its native `/model` UI. The local provider catalog exposes only:
 
 ```text
-GET /zcode-oauth-bridge/api/oauth/profile
-GET /zcode-oauth-bridge/api/oauth/usage
+GLM-5.3-Flash
+GLM-5.3
 ```
 
-Claude's built-in `/usage` therefore shows the ZCode-backed utilization and reset times **even before the first model prompt**. This was verified in the actual interactive TUI, not only `--print` mode.
+Reasoning choices map to ZCode as:
 
-- For `GLM-5.3`, the native current-session meter maps to the 3M Start Plan bucket.
-- For `GLM-5.3-Flash`, the bucket currently serving requests is the native current-session meter. The other Flash bucket is kept as the secondary native meter, so the normal 5M pool and promotional 100M Trust Build pool remain distinct.
-- Claude Code's labels (`Current session`, `Current week`) are built into Claude's UI; the percentages and reset timestamps come from ZCode.
-- `GET /v1/zcode/balance` remains available when exact raw units (`used_units`, `remaining_units`, `total_units`) are needed.
+```text
+Low        -> low
+High       -> high
+Extra high -> max
+```
 
-Claude Code's labels (`Current session`, `Current week`) remain Claude's own fixed UI labels. Their percentages and reset timestamps are populated from ZCode. The launcher never sends the local OAuth token or ZCode credentials to Anthropic for this feature.
+The proxy reads Codex's request model and `reasoning.effort` on every turn. A
+real TUI test switched `GLM-5.3-Flash · xhigh` to `GLM-5.3 · high`; the
+following upstream request was verified as backend `GLM-5.3` with ZCode
+thinking `high`.
+
+Codex `/usage` is also launcher-owned because OpenAI account usage is unrelated
+to ZCode quota. It displays the real ZCode buckets and their actual periods:
+normal Start Plan entitlements are daily, while the Trust Build promotional
+entitlement is one-time and is shown with its expiration timestamp.
+
+The Codex 0.160.0 service-only slash commands currently intercepted are:
+
+```text
+/daybreak
+/apps
+/voice
+/app
+/logout
+/feedback
+```
+
+Normal local Codex commands remain native, including `/model`,
+`/permissions`, `/review`, `/agents`, `/subagents`, `/worktree`,
+`/mcp`, `/plugins`, `/skills`, `/hooks`, `/memories`, `/import`,
+`/resume`, `/fork`, `/status`, `/diff`, `/compact`, and `/plan`.
+
+When explicit top-level commands are supplied through `--codex-args`, the
+launcher blocks OpenAI-hosted/account commands before starting the proxy:
+`login`, `logout`, `cloud`/ `cloud-tasks`, `app`, and
+`remote-control`. The local `exec-server` remains usable; only remote
+registration forms are blocked. Local commands such as `mcp`, `plugin`,
+`doctor`, `sandbox`, `resume`, `fork`, `exec`, and `review` remain
+available.
+
+Advanced arguments are also checked so a launcher-managed session cannot
+silently leave the ZCode route. Native OpenAI `--search`, `--oss` /
+`--local-provider`, remote app-server routing, unsupported model IDs, and
+provider-defining `-c/--config` overrides are rejected. Supported
+`--model glm-5.3` and `--model glm-5.3-flash` overrides remain valid, as do
+provider-independent Codex config overrides.
 
 Available backend models currently verified through the Start Plan endpoint:
 
@@ -133,7 +191,7 @@ The launcher stores:
 <run-dir>\claude-usage-after.json
 ```
 
-Interactive mode also prints the current quota before the CLI opens and the updated quota after the CLI exits. Promotional buckets such as the 100M daily GLM-5.3-Flash grant remain separate from normal Start Plan balances.
+Interactive mode also prints the current quota before the CLI opens and the updated quota after the CLI exits. Promotional buckets such as the 100M Trust Build GLM-5.3-Flash grant remain separate from normal Start Plan balances and retain their own entitlement period.
 
 ### Claude Code cache behavior
 
@@ -156,4 +214,8 @@ zcode-cli-launcher.cmd usage
 zcode-cli-launcher.cmd run claude --prompt "Reply only OK." --claude-thinking low
 ```
 
-Codex was not on `PATH` during this launcher smoke, so Codex mode is implemented and wired, but needs either a `codex` executable on `PATH` or `--codex-bin <path>` for a real run.
+Codex 0.160.0 is also verified in the real interactive TUI. Tested paths
+include the native GLM model/reasoning picker, dynamic model+effort switching,
+the ZCode `/usage` overlay, the complete service-only slash-command sweep,
+hosted/account top-level interception, protected provider/search routes, and a
+real forwarded local `features list` command.

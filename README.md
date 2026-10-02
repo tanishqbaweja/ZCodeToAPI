@@ -124,13 +124,19 @@ API key: anything, unless you set ZCODE_PROXY_API_KEY
 Model: glm-5.3-flash
 ```
 
-The proxy also exposes these aliases, all routed to the same backend GLM-5.3-Flash model:
+The proxy exposes these model IDs:
 
 ```text
 glm-5.3-flash
+glm-5.3
 GLM-5.3-Flash
+GLM-5.3
 zcode-glm-5.3-flash
 ```
+
+`glm-5.3-flash` routes to real ZCode `GLM-5.3-Flash`; `glm-5.3` routes to
+real ZCode `GLM-5.3`. The older compatibility alias
+`zcode-glm-5.3-flash` still maps to Flash.
 
 More details are in `OPENAI_PROXY.md`.
 
@@ -152,6 +158,42 @@ Both proxies expose current quota/balance:
 /v1/zcode/balance
 ```
 
+## Codex launcher
+
+On Windows, the easiest Codex path is:
+
+```bat
+zcode-cli-launcher.cmd
+```
+
+Choose Codex, then choose the ZCode model and initial thinking level. The
+launcher runs the real Codex CLI through a Windows PTY and gives it an isolated
+`CODEX_HOME` under a short path on the project drive. It does not copy OpenAI
+credentials or the normal Codex session database into that home.
+
+Verified with Codex CLI 0.160.0:
+
+- Codex's native `/model` picker lists only `GLM-5.3-Flash` and `GLM-5.3`.
+- The picker exposes Codex reasoning choices Low, High, and Extra high.
+- A real picker change from Flash/Extra-high to GLM-5.3/High was verified in
+  the proxy dump as `backend_model=GLM-5.3` and `thinking_level=high`.
+- `/usage` is launcher-owned and displays ZCode's real entitlement periods,
+  used/remaining units, and reset/expiry time instead of ChatGPT account limits.
+- Normal local Codex commands remain native.
+- OpenAI/ChatGPT-only slash commands such as `/daybreak`, `/apps`,
+  `/voice`, `/app`, `/logout`, and `/feedback` are intercepted with a
+  clear ZCodeToAPI explanation.
+- Hosted/account top-level commands such as `login`, `logout`, `cloud`,
+  `app`, and `remote-control` are also intercepted.
+- Provider escape routes such as native OpenAI `--search`, `--oss`,
+  `--local-provider`, remote app-server routing, unsupported model IDs, and
+  provider-defining config overrides are rejected rather than silently leaving
+  the ZCode route.
+
+Provider-independent features such as sessions, worktrees, reviews, MCP,
+plugins, skills, hooks, sandboxing, local app-server use, diagnostics, and
+feature flags remain Codex's own implementation.
+
 ## Claude Code launcher
 
 On Windows, the easiest Claude Code path is:
@@ -169,8 +211,9 @@ Inside that Claude Code session:
 - `/model glm-5.3` switches subsequent inference to real `GLM-5.3`.
 - `/model glm-5.3-flash` switches subsequent inference to real `GLM-5.3-Flash`.
 - `/effort` changes the ZCode thinking level used on subsequent requests.
-- `/usage` is intercepted by the launcher and shows ZCode's real **daily**
-  model buckets instead of Claude's unrelated 5-hour/weekly subscription labels.
+- `/usage` is intercepted by the launcher and shows ZCode's real model
+  buckets and entitlement periods instead of Claude's unrelated
+  5-hour/weekly subscription labels.
 - Ordinary local Claude Code commands continue through the real CLI normally.
 - Commands that specifically require an Anthropic account, billing system,
   Claude cloud agent, Claude Design, or another provider setup are intercepted
