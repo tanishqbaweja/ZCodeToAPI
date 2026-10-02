@@ -51,13 +51,6 @@ CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
             "For a faster ZCode session, use /model glm-5.3-flash and choose a lower /effort.",
         ),
     ),
-    "/deep-research": (
-        "Claude's hosted Deep Research search path is not available through ZCodeToAPI.",
-        (
-            "The model bridge works, but Claude's first-party WebSearch service is not backed by the ZCode API.",
-            "Use normal Claude Code prompts with local tools, MCP search tools, or another configured search source instead.",
-        ),
-    ),
     "/usage-credits": (
         "Anthropic usage credits are not used by ZCodeToAPI.",
         ("Use /usage to see the real ZCode daily model limits.",),
@@ -82,10 +75,6 @@ CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
         "Anthropic usage passes are not used by ZCodeToAPI.",
         ("ZCode access and quota come from the signed-in ZCode account.",),
     ),
-    "/powerup": (
-        "Anthropic account power-ups are not used by ZCodeToAPI.",
-        ("ZCode access and quota come from the signed-in ZCode account.",),
-    ),
     "/pro-trial-expired": (
         "Anthropic trial/account upgrade flows are not used by ZCodeToAPI.",
         ("ZCode access and quota come from the signed-in ZCode account.",),
@@ -98,9 +87,37 @@ CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
         "Claude cloud schedules are not available through ZCodeToAPI.",
         ("This command requires Anthropic's hosted cloud-agent infrastructure.",),
     ),
+    "/routines": (
+        "Claude cloud schedules are not available through ZCodeToAPI.",
+        ("This alias requires Anthropic's hosted cloud-agent infrastructure.",),
+    ),
     "/autofix-pr": (
         "Claude's hosted PR autofix workflow is not available through ZCodeToAPI.",
         ("This feature launches Anthropic cloud-agent work rather than a local model request.",),
+    ),
+    "/artifacts": (
+        "Claude's published/shared Artifacts browser is not available through ZCodeToAPI.",
+        ("This command depends on Claude's account-backed artifacts service.",),
+    ),
+    "/desktop": (
+        "Claude Desktop session handoff is not available through ZCodeToAPI.",
+        ("This command transfers the current Claude session into Anthropic's Desktop account surface.",),
+    ),
+    "/app": (
+        "Claude Desktop session handoff is not available through ZCodeToAPI.",
+        ("This alias transfers the current Claude session into Anthropic's Desktop account surface.",),
+    ),
+    "/advisor": (
+        "Claude's stronger-model Advisor is not available through ZCodeToAPI.",
+        ("ZCodeToAPI can only route the ZCode models exposed by the signed-in Start Plan account.",),
+    ),
+    "/teleport": (
+        "Claude cloud session teleport is not available through ZCodeToAPI.",
+        ("This command transfers the session to Anthropic's hosted claude.ai infrastructure.",),
+    ),
+    "/tp": (
+        "Claude cloud session teleport is not available through ZCodeToAPI.",
+        ("This alias transfers the session to Anthropic's hosted claude.ai infrastructure.",),
     ),
     "/remote-env": (
         "Claude remote environments are not available through ZCodeToAPI.",
@@ -110,9 +127,21 @@ CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
         "Claude remote control is not available through ZCodeToAPI.",
         ("Phone/claude.ai control requires Anthropic's hosted session infrastructure.",),
     ),
-    "/mobile": (
-        "Claude mobile handoff is not available through ZCodeToAPI.",
-        ("The QR-code flow attaches to Anthropic's hosted Claude session infrastructure.",),
+    "/session": (
+        "Claude cloud-session sharing is not available through ZCodeToAPI.",
+        ("This command exposes an Anthropic-hosted cloud-session URL/QR code.",),
+    ),
+    "/remote": (
+        "Claude cloud-session sharing is not available through ZCodeToAPI.",
+        ("This alias exposes an Anthropic-hosted cloud-session URL/QR code.",),
+    ),
+    "/rc": (
+        "Claude remote control is not available through ZCodeToAPI.",
+        ("This alias requires Anthropic's hosted session infrastructure.",),
+    ),
+    "/chrome": (
+        "Claude in Chrome account integration is not available through ZCodeToAPI.",
+        ("Use a normal Claude Code session to configure the claude.ai browser extension.",),
     ),
     "/__remote-workflow": (
         "Claude remote workflows are not available through ZCodeToAPI.",
@@ -121,10 +150,6 @@ CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "/workflow-launch-exec": (
         "Claude remote workflow execution is not available through ZCodeToAPI.",
         ("This internal command requires Anthropic's hosted cloud-agent infrastructure.",),
-    ),
-    "/team-onboarding": (
-        "Anthropic organization onboarding is not available through ZCodeToAPI.",
-        ("The launcher uses an isolated local gateway identity, not an Anthropic organization.",),
     ),
     "/design": (
         "Claude Design is not available through ZCodeToAPI.",
@@ -150,10 +175,6 @@ CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
         "Claude cloud plugins are not available through ZCodeToAPI.",
         ("Local Claude Code plugins continue to work; this command targets Anthropic cloud services.",),
     ),
-    "/stickers": (
-        "Claude Code merchandise ordering is outside ZCodeToAPI.",
-        ("This command opens an Anthropic-operated ordering flow rather than a coding-harness feature.",),
-    ),
     "/ultrareview": (
         "Anthropic stronger-model review is not available through ZCodeToAPI.",
         ("ZCodeToAPI can only route the ZCode models exposed by the signed-in Start Plan account.",),
@@ -162,10 +183,6 @@ CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
         "Anthropic cloud planning is not available through ZCodeToAPI.",
         ("This command hands a plan to an Anthropic-hosted cloud session for browser review.",),
     ),
-    "/install-slack-app": (
-        "Claude's hosted Slack-app installation is not available through ZCodeToAPI.",
-        ("This setup belongs to Anthropic's Claude/Slack service and requires a real Anthropic account.",),
-    ),
     "/install-github-app": (
         "Anthropic's hosted GitHub App setup is not available through ZCodeToAPI.",
         ("Local git, gh, and Claude Code repository tools remain available.",),
@@ -173,6 +190,10 @@ CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "/install-slack-app": (
         "Claude Tag / Slack app installation is not available through ZCodeToAPI.",
         ("This setup is tied to a real Anthropic/Claude account and hosted Slack integration.",),
+    ),
+    "/voice": (
+        "Claude voice mode is not available through ZCodeToAPI.",
+        ("This command is a claude.ai-only service surface in Claude Code.",),
     ),
     "/setup-bedrock": (
         "Provider setup is disabled inside ZCodeToAPI gateway sessions.",
@@ -193,6 +214,10 @@ CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "/bug": (
         "Anthropic bug-report submission is disabled in ZCodeToAPI sessions.",
         ("This prevents an isolated gateway session from trying to submit data to Anthropic.",),
+    ),
+    "/share": (
+        "Anthropic conversation sharing is disabled in ZCodeToAPI sessions.",
+        ("This /bug alias would submit or share the conversation through Anthropic.",),
     ),
     "/login": (
         "Anthropic login is intentionally disabled in ZCodeToAPI sessions.",

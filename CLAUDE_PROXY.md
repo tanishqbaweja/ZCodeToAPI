@@ -160,13 +160,16 @@ Current intercepted groups for Claude Code 2.1.287:
 ```text
 Account / quota:
   /fast /usage-credits /extra-usage /upgrade /rate-limit-options
-  /limit-reset /passes /powerup /pro-trial-expired /privacy-settings
+  /limit-reset /passes /pro-trial-expired /privacy-settings
   /login /logout
 
 Anthropic cloud / remote:
-  /schedule /autofix-pr /remote-env /remote-control /mobile
-  /__remote-workflow /workflow-launch-exec /team-onboarding
-  /cloud-plugins /install-github-app /install-slack-app /web-setup
+  /schedule /routines /autofix-pr /advisor
+  /teleport /tp /remote-env /remote-control /rc
+  /session /remote /desktop /app
+  /__remote-workflow /workflow-launch-exec
+  /cloud-plugins /artifacts /chrome /voice
+  /install-github-app /install-slack-app /web-setup
   /ultraplan /ultrareview
 
 Claude Design:
@@ -176,21 +179,15 @@ Provider switching inside the isolated ZCode session:
   /setup-bedrock /setup-vertex
 
 Anthropic submission:
-  /feedback /bug
-
-Hosted research:
-  /deep-research
-
-External Anthropic product extras:
-  /stickers
+  /feedback /bug /share
 ```
 
-`/deep-research` is intercepted because Claude Code exposes it as a dynamic
-workflow built around hosted web-search/fetch capabilities rather than a plain
-Messages API model turn. ZCodeToAPI does not pretend that Anthropic-hosted
-research infrastructure exists behind the ZCode gateway. Normal prompts can
-still use local tools, MCP search providers, or other search integrations
-configured by the user.
+Commands such as `/import`, `/powerup`, `/mobile`, `/team-onboarding`,
+`/stickers`, `/radio`, `/goal`, `/deep-research`, `/mcp`, `/config`, and
+`/permissions` remain Claude-native. In particular, the current Claude Code
+request schema exposes `WebSearch` and `WebFetch`, so the bundled
+`/deep-research` workflow can use the normal tool bridge instead of being
+incorrectly classified as an Anthropic-account command.
 
 ## Tool-call bridge
 
