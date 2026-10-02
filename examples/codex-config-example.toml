@@ -1,0 +1,14 @@
+# Example Codex CLI provider/profile for the local ZCode OpenAI-compatible proxy.
+# Start the proxy first:
+#   py openai_proxy.py --host 127.0.0.1 --port 8787
+
+[model_providers.zcode-glm]
+name = "ZCode GLM 5.3 Flash"
+base_url = "http://127.0.0.1:8787/v1"
+wire_api = "responses"
+requires_openai_auth = false
+
+[profiles.zcode-glm]
+model_provider = "zcode-glm"
+model = "glm-5.3-flash"
+
