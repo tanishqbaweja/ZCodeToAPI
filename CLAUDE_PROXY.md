@@ -139,59 +139,54 @@ buckets as daily limits with exact used, remaining, total, and reset values.
 
 ## Slash-command compatibility
 
-Normal local Claude Code commands continue to run in the real Claude TUI. This
-includes configuration/context views, MCP and plugin management, local agents,
-local skills, model selection, effort selection, compaction, rename, reload,
-and the normal coding/review/tool workflows. The launcher does not replace
-those commands.
+Normal local Claude Code commands are still handled by the real Claude Code
+binary. This includes local settings/context/plugin/MCP/session commands and
+model-driven skills that do not require Anthropic-hosted account services.
 
-Commands that specifically require Anthropic account, billing, hosted cloud
-agents, Claude Design, hosted WebSearch/Deep Research, provider setup, or
-Anthropic submission endpoints are intercepted before Claude can call those
-services. Instead of showing a misleading login/billing/network failure, the
-launcher explains why the command is unavailable and returns to Claude Code
-with Esc.
+The launcher owns three compatibility cases:
 
-The intercepted command set currently includes:
+- `/usage` renders ZCode's real daily quota buckets.
+- `/model` remains Claude-native, while the proxy maps the selected
+  `glm-5.3` or `glm-5.3-flash` request to the corresponding real ZCode model.
+- `/effort` remains Claude-native, while the proxy maps Claude's request effort
+  to ZCode's `low`, `high`, or `max` thinking level.
+
+Commands that cannot truthfully operate against the ZCode gateway are stopped
+before Claude attempts a real Anthropic account/cloud call. They display a
+short explanation and return to the normal TUI with Esc.
+
+Current intercepted groups for Claude Code 2.1.287:
 
 ```text
-/fast
-/deep-research
-/usage-credits
-/extra-usage
-/upgrade
-/rate-limit-options
-/limit-reset
-/passes
-/powerup
-/pro-trial-expired
-/privacy-settings
-/schedule
-/autofix-pr
-/remote-env
-/remote-control
-/__remote-workflow
-/workflow-launch-exec
-/team-onboarding
-/design
-/design-sync
-/design-consent
-/design-revoke
-/design-login
-/cloud-plugins
-/install-github-app
-/setup-bedrock
-/setup-vertex
-/web-setup
-/feedback
-/bug
-/login
-/logout
+Account / quota:
+  /fast /usage-credits /extra-usage /upgrade /rate-limit-options
+  /limit-reset /passes /powerup /pro-trial-expired /privacy-settings
+  /login /logout
+
+Anthropic cloud / remote:
+  /schedule /autofix-pr /remote-env /remote-control
+  /__remote-workflow /workflow-launch-exec /team-onboarding
+  /cloud-plugins /install-github-app /web-setup
+
+Claude Design:
+  /design /design-sync /design-consent /design-revoke /design-login
+
+Provider switching inside the isolated ZCode session:
+  /setup-bedrock /setup-vertex
+
+Anthropic submission:
+  /feedback /bug
+
+Hosted research:
+  /deep-research
 ```
 
-`/usage` is handled separately: it is intentionally replaced by the ZCode
-daily-quota screen because Claude's native subscription UI uses incompatible
-5-hour/weekly labels.
+`/deep-research` is intercepted because a real Claude Code `WebSearch` tool
+call was tested through the isolated gateway and the first-party search layer
+returned an empty result set. The model/tool bridge itself completed, but
+silently treating an empty hosted search as working research would be
+misleading. Normal prompts can still use local tools, MCP search providers, or
+other search integrations configured by the user.
 
 ## Tool-call bridge
 
@@ -240,7 +235,7 @@ docker run --rm --user node `
   -e ANTHROPIC_API_KEY=local `
   -e ANTHROPIC_MODEL=claude-sonnet-4-5-20250929 `
   -e SHELL=/bin/bash `
-  node:22 bash -lc "export npm_config_prefix=/tmp/npm-global; export PATH=/tmp/npm-global/bin:`$PATH; npm install -g @anthropic-ai/claude-code >/tmp/npm-install.log 2>&1 && cd /work/app && claude --bare --verbose --print --output-format stream-json --permission-mode bypassPermissions < .create-prompt.txt"
+  node:22 bash -lc "export npm_config_prefix=/tmp/npm-global; export PATH=/tmp/npm-global/bin:`$PATH; npm install -g @anthropic-ai/claude-code >/tmp/npm-install.log 2>&1 && cd /work/app && claude --verbose --print --output-format stream-json --permission-mode bypassPermissions < .create-prompt.txt"
 ```
 
 For the local proxy, `low` thinking is the recommended starting point for Claude Code stability:
@@ -270,7 +265,6 @@ node --check app\src\storage.js
 Useful flags:
 
 ```text
---bare
 --verbose
 --print
 --output-format stream-json

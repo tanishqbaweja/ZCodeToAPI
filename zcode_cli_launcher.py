@@ -832,8 +832,9 @@ def run_claude_interactive_pty(cmd: list[str], env: dict[str, str], cwd: Path, o
 
     Claude's built-in /usage labels its quota windows as 5-hour/week. ZCode's
     entitlements are daily, so forwarding /usage would be actively misleading.
-    The launcher therefore catches only the exact /usage command and renders
-    live ZCode model buckets itself. Every other key is relayed unchanged.
+    The launcher renders live ZCode model buckets itself and also catches
+    Anthropic-account/cloud-only commands that cannot work against a local
+    ZCode gateway. All ordinary local Claude Code input is relayed unchanged.
     """
     import msvcrt
     from winpty import PtyProcess

@@ -171,16 +171,21 @@ Inside that Claude Code session:
 - `/effort` changes the ZCode thinking level used on subsequent requests.
 - `/usage` is intercepted by the launcher and shows ZCode's real **daily**
   model buckets instead of Claude's unrelated 5-hour/weekly subscription labels.
+- Ordinary local Claude Code commands continue through the real CLI normally.
+- Commands that specifically require an Anthropic account, billing system,
+  Claude cloud agent, Claude Design, or another provider setup are intercepted
+  with an explicit ZCodeToAPI explanation instead of falling into login or
+  subscription errors.
 
 The proxy reads Claude Code's actual request model and
 `output_config.effort`, so changing these controls in Claude changes the
 upstream ZCode request rather than only changing the text shown in the TUI.
 
-Claude commands that belong to Anthropic's own billing/account/cloud services
-are also caught by the launcher and shown as clearly unsupported instead of
-falling through to confusing login or subscription errors. Local Claude Code
-commands and normal coding-agent workflows continue to pass through unchanged.
-See `CLAUDE_PROXY.md` for the current compatibility list.
+The compatibility sweep for Claude Code 2.1.287 also explicitly handles
+Anthropic-only commands such as `/fast`, `/deep-research`, `/schedule`,
+`/remote-env`, `/remote-control`, `/usage-credits`, `/extra-usage`,
+Claude Design commands, hosted GitHub/cloud-plugin setup, `/login`, and
+`/logout`. See `CLAUDE_PROXY.md` for the full grouped list.
 
 ## How to use a different ZCode account
 
