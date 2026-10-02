@@ -615,14 +615,16 @@ def cmd_claim(args: argparse.Namespace) -> int:
             )
     elif result.get("captcha_required"):
         print(str(result.get("message") or "Fresh Aliyun verification is required."))
-        return 3
     else:
         print(
             f"Claim rejected (code={result.get('code')}): "
             f"{result.get('message') or 'unknown upstream error'}"
         )
-        return 1
-    return 0
+    if result.get("success"):
+        return 0
+    if result.get("captcha_required"):
+        return 3
+    return 1
 
 
 def print_usage_human(data: dict[str, Any] | None) -> int:
