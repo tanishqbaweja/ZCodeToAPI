@@ -1,130 +1,69 @@
 # ZCodeToAPI
 
-This project lets you use your own ZCode account from a Python script or from your own app.
-
-In simple terms:
-
-```text
-Your app or script -> ZCode Start Plan endpoint -> GLM-5.3 / GLM-5.3-Flash -> response
-```
-
-It does **not** open or control the ZCode desktop app for each message. It still uses ZCode's backend and a real ZCode account that is allowed to use Start Plan.
-
-## What this can do
-
-You can use this project to:
-
-- test the ZCode Start Plan endpoint from Python
-- send prompts to GLM-5.3 or GLM-5.3-Flash through the ZCode Start Plan backend
-- use the endpoint inside your own local app
-- run a local OpenAI-compatible proxy server for tools that support custom OpenAI base URLs
-- run a local Claude/Anthropic-compatible proxy server for Claude Code
-- launch real Codex or Claude Code sessions through isolated local proxy settings
-
-This is **not** a raw Z.ai API key client. It is an unofficial interoperability client for the ZCode Start Plan endpoint.
-
-## Important rules
-
-- Use only accounts you own or are authorized to use.
-- Do not commit real credentials, tokens, or `.env` files.
-- Do not print or log tokens, API keys, CAPTCHA values, or decrypted credentials.
-- Do not try to bypass account limits, entitlement checks, CAPTCHA, or anti-abuse checks.
-- The endpoint can change at any time because this is not an official public API.
-
-## Files in this folder
+ZCodeToAPI is an **unofficial reverse-engineered interoperability client** for
+using a signed-in ZCode Start Plan account from scripts, local applications,
+OpenAI-compatible clients, Codex, and Claude Code.
 
 ```text
-README.md                         Beginner setup guide
-INTEGRATION.md                    Notes for app developers
-OPENAI_PROXY.md                   OpenAI-compatible proxy guide
-CLAUDE_PROXY.md                   Claude Code / Anthropic Messages proxy guide
-zcode_direct_client.py            Main Python client
-openai_proxy.py                   Local OpenAI-compatible proxy server
-claude_proxy.py                   Local Claude-compatible proxy server
-start_plan_request_template.json  Request template copied from the working ZCode flow
-.env.example                      Safe example environment file
-examples/custom_system_prompt.txt Experimental prompt example
+Your app / Codex / Claude Code
+            |
+            v
+      ZCodeToAPI
+   local compatibility layer
+            |
+            v
+   ZCode Start Plan backend
+            |
+            v
+   GLM-5.3 / GLM-5.3-Flash
 ```
 
-## What you need first
+It does not emulate a Z.ai API key and it does not bypass ZCode account,
+entitlement, quota, CAPTCHA, or anti-abuse checks. It uses the credentials and
+entitlements of a ZCode account you already own or are authorized to use.
 
-Before running this, make sure you have:
+## Current verified state
 
-1. ZCode installed.
-2. A ZCode account with Start Plan access.
-3. Python installed on your computer.
-4. The account signed in at least once in the ZCode desktop app.
+The current implementation has been verified on Windows with:
 
-The script uses the local ZCode login stored on the computer. That is how it knows which account to use.
+| Component | Verified version / state |
+| --- | --- |
+| ZCode desktop client inspected | 3.14.4 |
+| Codex CLI | 0.160.0 |
+| Claude Code | 2.1.287 |
+| ZCode models | GLM-5.3, GLM-5.3-Flash |
+| ZCode thinking levels | low, high, max |
+| OpenAI-compatible proxy | Chat Completions, Responses, Completions, models, tools |
+| Anthropic-compatible proxy | Messages, token counting, tools, models |
+| Codex interactive TUI | WinPTY relay, native model picker, dynamic reasoning |
+| Claude interactive TUI | isolated runtime/auth, model + effort switching |
+| ZCode quota | live balance buckets and entitlement periods |
+| Promotional grants | live preview + claim flow with official Aliyun verification |
 
-## Step 1: open this folder in Command Prompt
+The repository is intentionally provider-specific at the backend: all inference
+still goes to the ZCode Start Plan service.
 
-Open Command Prompt or Terminal inside this project folder.
+## What works
 
-A simple way on Windows:
+### Direct ZCode client
 
-1. Open this folder in File Explorer.
-2. Click the address bar.
-3. Type `cmd`.
-4. Press Enter.
+`zcode_direct_client.py` can:
 
-A Command Prompt should open directly inside this folder.
+- load the local ZCode Start Plan credential
+- call the ZCode Start Plan model endpoint directly
+- use GLM-5.3 or GLM-5.3-Flash
+- use low, high, or max thinking
+- fetch live balance/quota information
+- discover currently claimable Start Plan promotions
+- claim an eligible promotion through ZCode's real claim endpoint
+- run the official Aliyun CAPTCHA flow when ZCode requires verification
 
-## Step 2: install Python packages
+### OpenAI-compatible API
 
-Run this once:
+`openai_proxy.py` exposes a local OpenAI-compatible API suitable for custom
+apps and Codex-style clients.
 
-```bat
-py -m pip install requests cryptography
-```
-
-If that finishes without errors, continue.
-
-## Step 3: test the direct client
-
-Run:
-
-```bat
-py zcode_direct_client.py "Hello how are you"
-```
-
-Expected result:
-
-```text
-HTTP 200 OK
-Response:
-...
-```
-
-If you see `HTTP 200 OK`, the basic direct client is working.
-
-## Step 4: run the OpenAI-compatible proxy
-
-The proxy lets OpenAI-compatible tools talk to this project through a local server.
-
-Start it with:
-
-```bat
-py openai_proxy.py --host 127.0.0.1 --port 8787
-```
-
-It will print:
-
-```text
-ZCode OpenAI-compatible proxy listening on http://127.0.0.1:8787/v1
-```
-
-Keep this window open while another app uses the proxy.
-
-Use these settings in apps that support a custom OpenAI-compatible API:
-
-```text
-Base URL: http://127.0.0.1:8787/v1
-API key: anything, unless you set ZCODE_PROXY_API_KEY
-Model: glm-5.3-flash
-```
-
-The proxy exposes these model IDs:
+Supported model IDs include:
 
 ```text
 glm-5.3-flash
@@ -134,31 +73,208 @@ GLM-5.3
 zcode-glm-5.3-flash
 ```
 
-`glm-5.3-flash` routes to real ZCode `GLM-5.3-Flash`; `glm-5.3` routes to
-real ZCode `GLM-5.3`. The older compatibility alias
-`zcode-glm-5.3-flash` still maps to Flash.
+The proxy supports:
 
-More details are in `OPENAI_PROXY.md`.
+- `/v1/chat/completions`
+- `/v1/responses`
+- `/v1/completions`
+- OpenAI-style function/tool calls
+- per-request model switching
+- per-request reasoning effort
+- live ZCode balance
+- promotional claim preview and claim endpoints
+- Codex's native provider model catalog
 
-The proxy now has a Responses API function-call bridge for Codex-style agent loops. It converts JSON action requests from the model into OpenAI-style `function_call` response items.
+Codex `xhigh` reasoning maps to ZCode `max`.
 
-For debugging, set `ZCODE_PROXY_DUMP_DIR` before starting the proxy. This saves each incoming request and generated response as JSON files.
+### Anthropic / Claude-compatible API
 
-For Claude Code-style clients, see `CLAUDE_PROXY.md`.
+`claude_proxy.py` exposes a local Anthropic-compatible Messages API.
 
-Both proxies support ZCode thinking levels:
+It supports:
 
-```text
-low, high, max
+- `/v1/messages`
+- `/v1/messages/count_tokens`
+- Claude-style tool use / tool results
+- GLM-5.3 and GLM-5.3-Flash
+- dynamic `/model` changes from Claude Code
+- dynamic `/effort` changes from Claude Code
+- live ZCode quota
+- promotional claim preview and claim endpoints
+- isolated local OAuth/profile compatibility for Claude Code
+
+## Codex integration
+
+The easiest Windows entry point is:
+
+```bat
+zcode-cli-launcher.cmd
 ```
 
-Both proxies expose current quota/balance:
+Choose **Codex**, then select the ZCode model and initial thinking level.
+
+The launcher:
+
+- runs the real Codex CLI through a Windows PTY
+- keeps Codex's ZCode configuration isolated from normal OpenAI auth/session state
+- uses a short project-drive `CODEX_HOME`
+- preserves the ZCodeToAPI-owned Codex settings/plugin state across launches
+- supplies a ZCode-specific native model catalog
+- keeps local/provider-independent Codex features native
+
+### Native `/model`
+
+Codex's own model picker is preserved, but the provider catalog contains only:
 
 ```text
-/v1/zcode/balance
+GLM-5.3-Flash
+GLM-5.3
 ```
 
-They also expose ZCode's manual Start Plan claim flow:
+Reasoning choices map as:
+
+```text
+Low        -> ZCode low
+High       -> ZCode high
+Extra high -> ZCode max
+```
+
+This is not cosmetic. A real TUI test changed:
+
+```text
+GLM-5.3-Flash / xhigh
+        ->
+GLM-5.3 / high
+```
+
+and the next upstream request was verified as `GLM-5.3` with ZCode thinking
+`high`.
+
+### Codex `/usage`
+
+Codex's OpenAI-account usage is unrelated to ZCode quota. The launcher
+therefore owns `/usage` and renders ZCode's real buckets, including:
+
+- model
+- plan
+- entitlement period
+- used units
+- remaining units
+- total units
+- reset or expiry time
+
+### Codex commands
+
+Local/provider-independent commands remain native. Verified examples include
+`/permissions`, `/status`, `/mcp`, `/plugins`, `/skills`, `/hooks`,
+`/memories`, `/agents`, `/experimental`, reviews, worktrees, sessions,
+sandboxing, resume/fork, and local diagnostics.
+
+OpenAI/ChatGPT-hosted slash commands that cannot truthfully work through ZCode
+are intercepted with an explicit explanation. The verified Codex 0.160.0 set
+includes:
+
+```text
+/daybreak
+/apps
+/voice
+/app
+/logout
+/feedback
+```
+
+Hosted/account top-level commands such as `login`, `logout`, `cloud`,
+`cloud-tasks`, `app`, and `remote-control` are likewise rejected when
+passed through the launcher rather than silently escaping to OpenAI.
+
+Provider escape routes such as unsupported model IDs, native OpenAI search,
+OSS/local-provider routing, and provider-defining config overrides are also
+blocked in launcher-managed Codex sessions.
+
+## Claude Code integration
+
+Run:
+
+```bat
+zcode-cli-launcher.cmd
+```
+
+and choose **Claude**.
+
+The launcher uses the real installed Claude Code CLI but keeps ZCodeToAPI's
+compatibility runtime and credentials isolated from the user's normal Claude
+Code login.
+
+Verified behavior:
+
+- `/model glm-5.3` switches subsequent inference to ZCode GLM-5.3
+- `/model glm-5.3-flash` switches back to ZCode GLM-5.3-Flash
+- `/effort` changes the actual ZCode thinking level
+- `/usage` shows ZCode's real quota instead of Claude subscription windows
+- local Claude Code tools and workflows continue through the real CLI
+- tool-use loops and multi-file edits work through the compatibility proxy
+
+Claude's built-in account/cloud surfaces are not emulated. Commands that
+specifically depend on Anthropic billing, hosted agents, Claude Design,
+provider setup, or Anthropic account services are intercepted with a clear
+ZCodeToAPI explanation.
+
+The compatibility sweep covers the relevant Claude Code 2.1.287 commands and
+aliases, including account/cloud features such as `/fast`, `/schedule`,
+`/teleport`, `/remote-control`, `/usage-credits`, `/extra-usage`,
+Claude Design, hosted integrations, `/login`, and `/logout`.
+
+See `CLAUDE_PROXY.md` for the grouped command list and implementation notes.
+
+## ZCode usage / quota
+
+Both proxies expose:
+
+```text
+GET /v1/zcode/balance
+GET /v1/usage
+```
+
+The launcher also provides:
+
+```bat
+zcode-cli-launcher.cmd usage
+zcode-cli-launcher.cmd usage --json
+```
+
+The usage renderer preserves each bucket's actual ZCode entitlement period.
+For example, normal recurring limits and one-time promotional grants are shown
+as separate buckets rather than being merged into Claude/OpenAI subscription
+windows.
+
+## Trust Build / promotional grant claiming
+
+ZCodeToAPI now reproduces the manual Start Plan claim flow used by the ZCode
+desktop client without requiring the ZCode application itself to be open.
+
+The ZCode 3.14.4 client uses:
+
+```text
+GET  https://zcode.z.ai/api/v1/zcode-plan/billing/preview
+POST https://zcode.z.ai/api/v1/zcode-plan/billing/claim
+```
+
+### Dynamic plan discovery
+
+The plan ID is **not hardcoded**.
+
+ZCodeToAPI fetches the live preview and selects the current eligible
+GLM-5.3-Flash promotion. It prefers a Trust Build grant of at least 100M
+tokens, then falls back to the highest-value/highest-priority eligible Flash
+grant.
+
+During the latest live verification, preview returned a 100,000,000-token
+one-time GLM-5.3-Flash Trust Build offer. Future campaign IDs can change
+without requiring a code update.
+
+### API
+
+Both compatibility proxies expose:
 
 ```text
 GET  /v1/zcode/claim-preview
@@ -166,238 +282,298 @@ GET  /v1/zcode/claim/preview
 POST /v1/zcode/claim
 ```
 
-The preview endpoint discovers the currently claimable plan from ZCode instead
-of hardcoding a promotional plan ID. The claim endpoint accepts an optional
-`plan_id`; when omitted, it prefers the current Trust Build GLM-5.3-Flash
-grant of at least 100M tokens, then falls back to the highest-priority/largest
-claimable Flash grant. If a fresh Aliyun verification value is not supplied,
-the API returns `428` with `captcha_required: true`. For a local desktop
-caller, send `{"auto_verify": true}` to run the official Aliyun verification
-flow without opening the ZCode application. The legacy
-`interactive_verification` field is accepted as an alias.
+Example local claim request:
 
-The launcher exposes the same flow directly:
+```json
+{
+  "auto_verify": true
+}
+```
+
+Optional fields:
+
+```json
+{
+  "plan_id": "an exact plan id returned by preview",
+  "captcha_verify_param": "a fresh Aliyun verification value",
+  "captcha_region": "region override",
+  "auto_verify": false,
+  "verification_timeout": 120
+}
+```
+
+The legacy `interactive_verification` field is accepted as an alias for
+`auto_verify`.
+
+If verification is required and no fresh value is supplied, the API returns
+HTTP `428` with `captcha_required: true`.
+
+Automatic browser verification is intentionally **loopback-only**. Remote
+callers must provide their own fresh `captcha_verify_param`.
+
+### CAPTCHA behavior
+
+The project does not bypass CAPTCHA.
+
+It uses the same official Aliyun SDK flow as ZCode:
+
+1. request the current CAPTCHA config from ZCode
+2. attempt Aliyun's traceless verification
+3. if Aliyun escalates the request, show the interactive challenge
+4. submit the fresh verification value to ZCode's real claim endpoint
+
+The ZCode desktop app does not need to be opened for this flow.
+
+Short-lived CAPTCHA values are redacted from proxy request dumps.
+
+### Launcher commands
 
 ```bat
 zcode-cli-launcher.cmd claim-preview
 zcode-cli-launcher.cmd claim
 ```
 
-`claim` auto-discovers the currently available grant and opens only the
-official Aliyun verification page when verification is required. ZCode itself
-does not need to be opened.
-
-## Codex launcher
-
-On Windows, the easiest Codex path is:
+Useful forms:
 
 ```bat
-zcode-cli-launcher.cmd
+zcode-cli-launcher.cmd claim-preview --json
+zcode-cli-launcher.cmd claim --plan-id <plan-id>
+zcode-cli-launcher.cmd claim --captcha-verify-param "<fresh-value>"
+zcode-cli-launcher.cmd claim --no-browser --json
 ```
 
-Choose Codex, then choose the ZCode model and initial thinking level. The
-launcher runs the real Codex CLI through a Windows PTY and gives it an isolated
-`CODEX_HOME` under a short path on the project drive. It does not copy OpenAI
-credentials or the normal Codex session database into that home.
+Claim command exit codes:
 
-That isolated Codex configuration is persistent across launcher runs. Codex's
-own local settings and plugin install state are preserved, while the ZCode
-provider, initial model, and requested reasoning effort are enforced per
-invocation.
+```text
+0 = claim succeeded
+1 = claim rejected or another error occurred
+3 = eligible claim exists but fresh CAPTCHA verification is required
+```
 
-Verified with Codex CLI 0.160.0:
+## Quick start
 
-- Codex's native `/model` picker lists only `GLM-5.3-Flash` and `GLM-5.3`.
-- The picker exposes Codex reasoning choices Low, High, and Extra high.
-- A real picker change from Flash/Extra-high to GLM-5.3/High was verified in
-  the proxy dump as `backend_model=GLM-5.3` and `thinking_level=high`.
-- `/usage` is launcher-owned and displays ZCode's real entitlement periods,
-  used/remaining units, and reset/expiry time instead of ChatGPT account limits.
-- Normal local Codex commands remain native.
-- `/plugins` remains native and is backed by one shared ZCodeToAPI-owned copy
-  of Codex's existing curated marketplace on the project drive. A live
-  add/list/remove cycle verified plugin state persists across separate launcher
-  invocations without modifying the normal `~/.codex` configuration.
-- OpenAI/ChatGPT-only slash commands such as `/daybreak`, `/apps`,
-  `/voice`, `/app`, `/logout`, and `/feedback` are intercepted with a
-  clear ZCodeToAPI explanation.
-- Hosted/account top-level commands such as `login`, `logout`, `cloud`,
-  `app`, and `remote-control` are also intercepted.
-- Provider escape routes such as native OpenAI `--search`, `--oss`,
-  `--local-provider`, remote app-server routing, unsupported model IDs, and
-  provider-defining config overrides are rejected rather than silently leaving
-  the ZCode route.
+### Requirements
 
-Provider-independent features such as sessions, worktrees, reviews, MCP,
-plugins, skills, hooks, sandboxing, local app-server use, diagnostics, and
-feature flags remain Codex's own implementation.
+- Windows (current tested launcher platform)
+- Python 3
+- ZCode installed and signed in at least once
+- a ZCode account with Start Plan access
+- Codex installed if you want Codex integration
+- Claude Code installed if you want Claude integration
 
-## Claude Code launcher
-
-On Windows, the easiest Claude Code path is:
+Install Python dependencies:
 
 ```bat
-zcode-cli-launcher.cmd
+py -m pip install requests cryptography pywinpty
 ```
 
-Choose Claude, then choose the real ZCode model and the initial thinking level.
-The launcher keeps its credentials, patched compatibility runtime, and writable
-Claude configuration isolated from your normal installed Claude Code setup.
+### Direct request
 
-Inside that Claude Code session:
-
-- `/model glm-5.3` switches subsequent inference to real `GLM-5.3`.
-- `/model glm-5.3-flash` switches subsequent inference to real `GLM-5.3-Flash`.
-- `/effort` changes the ZCode thinking level used on subsequent requests.
-- `/usage` is intercepted by the launcher and shows ZCode's real model
-  buckets and entitlement periods instead of Claude's unrelated
-  5-hour/weekly subscription labels.
-- Ordinary local Claude Code commands continue through the real CLI normally.
-- Commands that specifically require an Anthropic account, billing system,
-  Claude cloud agent, Claude Design, or another provider setup are intercepted
-  with an explicit ZCodeToAPI explanation instead of falling into login or
-  subscription errors.
-
-The proxy reads Claude Code's actual request model and
-`output_config.effort`, so changing these controls in Claude changes the
-upstream ZCode request rather than only changing the text shown in the TUI.
-
-The compatibility sweep for Claude Code 2.1.287 also explicitly handles
-Anthropic-only account/cloud commands such as `/fast`, `/schedule`,
-`/teleport`, `/remote-control`, `/usage-credits`, `/extra-usage`,
-Claude Design commands, hosted GitHub/Slack/cloud-plugin setup, `/login`, and
-`/logout`. Local commands and bundled workflows that can operate through the
-normal Claude tool loop remain native. See `CLAUDE_PROXY.md` for the grouped
-list.
-
-## How to use a different ZCode account
-
-The simplest method:
-
-1. Open the official ZCode desktop app.
-2. Sign out.
-3. Sign in with the other ZCode account.
-4. Confirm that account has Start Plan access.
-5. Run this project again.
-
-The script normally uses the ZCode account stored for the current Windows user.
-
-For multiple accounts, the cleanest setup is one Windows user profile per ZCode account. That keeps each account's local login storage separate.
-
-## Using this from your own app
-
-The easiest option is to call the script as a subprocess:
-
-```python
-import subprocess
-
-result = subprocess.run(
-    ["py", "zcode_direct_client.py", "Hello how are you"],
-    text=True,
-    capture_output=True,
-)
-
-print(result.stdout)
+```bat
+py zcode_direct_client.py "Reply only OK." --model GLM-5.3-Flash --thinking-level max
 ```
 
-For OpenAI-compatible tools, run the proxy instead:
+Useful direct commands:
+
+```bat
+py zcode_direct_client.py --balance
+py zcode_direct_client.py --claim-preview
+py zcode_direct_client.py --claim
+py zcode_direct_client.py --claim --claim-no-browser
+```
+
+### OpenAI-compatible proxy
 
 ```bat
 py openai_proxy.py --host 127.0.0.1 --port 8787
 ```
 
-Then configure your tool to use:
+Configure the client with:
 
 ```text
-http://127.0.0.1:8787/v1
+Base URL: http://127.0.0.1:8787/v1
+Model:    glm-5.3-flash
+API key:  any local value unless ZCODE_PROXY_API_KEY is configured
 ```
 
-## About system prompts
+### Claude-compatible proxy
 
-Current tested behavior:
+```bat
+py claude_proxy.py --host 127.0.0.1 --port 8788
+```
+
+### Interactive launcher
+
+```bat
+zcode-cli-launcher.cmd
+```
+
+Other useful launcher commands:
+
+```bat
+zcode-cli-launcher.cmd models
+zcode-cli-launcher.cmd usage
+zcode-cli-launcher.cmd claim-preview
+zcode-cli-launcher.cmd run codex
+zcode-cli-launcher.cmd run claude
+```
+
+## API surface
+
+### OpenAI-compatible proxy
+
+```text
+GET  /health
+GET  /v1/models
+GET  /v1/models/{model}
+GET  /v1/codex/models
+GET  /v1/zcode/balance
+GET  /v1/usage
+GET  /v1/zcode/claim-preview
+GET  /v1/zcode/claim/preview
+POST /v1/chat/completions
+POST /v1/responses
+POST /v1/completions
+POST /v1/zcode/claim
+```
+
+### Claude-compatible proxy
+
+```text
+GET  /health
+HEAD /api/hello
+GET  /v1/models
+GET  /v1/zcode/balance
+GET  /v1/usage
+GET  /v1/zcode/claim-preview
+GET  /v1/zcode/claim/preview
+POST /v1/messages
+POST /v1/messages/count_tokens
+POST /v1/zcode/claim
+```
+
+See `OPENAI_PROXY.md` and `CLAUDE_PROXY.md` for protocol-specific details.
+
+## Credentials and isolation
+
+By default, the project reads the local ZCode credential store:
+
+```text
+%USERPROFILE%\.zcode\v2\credentials.json
+```
+
+Process-only overrides are also supported:
+
+```text
+ZCODE_START_PLAN_TOKEN
+ZCODE_JWT_TOKEN
+```
+
+Optional local-proxy protection:
+
+```text
+ZCODE_PROXY_API_KEY
+ZCODE_CLAUDE_PROXY_API_KEY
+```
+
+See `.env.example` for the supported environment variables.
+
+The Codex and Claude launchers deliberately isolate their compatibility
+credentials/settings rather than rewriting the user's normal OpenAI or
+Anthropic login configuration.
+
+## System prompt constraint
+
+The tested ZCode Start Plan route expects the stock ZCode request shape and
+system template.
+
+Verified behavior:
 
 ```text
 Stock ZCode template + normal user messages:
 works
 
-Replacing the core system prompt directly:
-was rejected with code 3012 in tests
+Replacing the backend system prompt directly:
+can be rejected with code 3012
 
-Keeping the stock template and steering behavior through user messages:
+Keeping the stock template and steering behavior through the conversation:
 works
 ```
 
-So for now, keep the behavioral contents of `start_plan_request_template.json`
-unchanged. The checked-in template replaces the captured Windows user path
-with a placeholder; `zcode_direct_client.py` restores the local workspace path
-in memory at runtime so no machine-specific username is stored in Git.
+For that reason, `start_plan_request_template.json` keeps the backend-compatible
+template. Machine-specific paths are represented by placeholders in Git and
+filled locally in memory at runtime.
 
-If you want your app to give the model a custom identity or behavior, put that instruction in the message history instead of replacing the system prompt.
+## Security / safety notes
 
-Example:
+- Use only ZCode accounts you own or are authorized to use.
+- Never commit real credentials, JWTs, API keys, CAPTCHA values, or `.env`
+  files.
+- Proxy diagnostics can contain prompts and tool results; review them before
+  sharing.
+- Claim CAPTCHA values are short-lived and redacted from normal request dumps.
+- The claim API preserves ZCode eligibility, CAPTCHA, quota, and anti-abuse
+  checks.
+- This is not an official public ZCode API and upstream behavior may change.
+
+## Known limitations
+
+- The interactive launcher is currently tested primarily on Windows.
+- ZCode's internal endpoints and client request shape are unofficial and can
+  change between ZCode releases.
+- Hosted OpenAI/Anthropic account features are intentionally not emulated.
+- Some hosted CLI commands are intercepted because they have no truthful ZCode
+  equivalent.
+- A claim may still require an interactive Aliyun challenge even though the
+  ZCode desktop app itself is not needed.
+- Direct replacement of ZCode's core system prompt can trigger upstream
+  unusual-activity rejection.
+
+## Project layout
 
 ```text
-User message 1:
-You are Trebell Code from now.
-
-User message 2:
-Who are you?
+README.md                         Current overview and quick start
+INTEGRATION.md                    App integration notes
+OPENAI_PROXY.md                   OpenAI/Codex-compatible proxy details
+CLAUDE_PROXY.md                   Claude/Anthropic-compatible proxy details
+CLI_LAUNCHER.md                   Codex/Claude launcher behavior
+zcode_direct_client.py            Direct ZCode Start Plan client
+openai_proxy.py                   OpenAI-compatible local proxy
+claude_proxy.py                   Anthropic-compatible local proxy
+zcode_cli_launcher.py             Isolated Codex/Claude launcher
+zcode-cli-launcher.cmd            Windows launcher entry point
+start_plan_request_template.json  Backend-compatible request template
+.env.example                      Safe environment-variable examples
+examples/                         Small examples
+tests/                            Repository tests
 ```
 
-That worked in testing while keeping the backend-accepted request shape.
+## Verification performed
 
-## Common errors
+Recent live verification includes:
 
-### `HTTP 200 OK`
+- direct GLM-5.3 and GLM-5.3-Flash requests
+- low/high/max thinking
+- OpenAI Responses tool loops
+- real Codex coding/tool execution
+- Codex native model + reasoning switching
+- Codex local command smoke tests
+- Codex hosted/account command interception
+- Claude Code tool loops and multi-file edits
+- Claude model and effort switching
+- Claude account/cloud command compatibility sweep
+- live ZCode quota retrieval
+- live promotional claim preview
+- claim request-contract tests without consuming the live promotion
+- OpenAI and Claude claim-handler routing tests
+- live OpenAI-compatible claim-preview endpoint
 
-Good. The request worked.
+The claim implementation was tested non-destructively: preview and request
+construction were verified without consuming the available promotional grant.
 
-### `code 3012` or `request has been blocked due to unusual activity`
+## More documentation
 
-The backend rejected the request.
-
-Common causes:
-
-- the system prompt/template was changed too much
-- the request shape changed too much
-- the account/session/token has an issue
-- the backend anti-abuse check was triggered
-
-Try again with the stock template and a simple prompt:
-
-```bat
-py zcode_direct_client.py "Reply only OK."
-```
-
-### Python says a package is missing
-
-Install dependencies again:
-
-```bat
-py -m pip install requests cryptography
-```
-
-### It uses the wrong account
-
-The script normally uses the account signed in to ZCode on the current Windows user.
-
-To switch accounts, sign out/in inside the official ZCode desktop app first, then run the script again.
-
-## Quick start
-
-```bat
-py -m pip install requests cryptography
-py zcode_direct_client.py "Hello how are you"
-```
-
-Then, for OpenAI-compatible apps:
-
-```bat
-py openai_proxy.py --host 127.0.0.1 --port 8787
-```
-
-Or, for Claude Code / Anthropic-compatible apps:
-
-```bat
-py claude_proxy.py --host 127.0.0.1 --port 8788
-```
+- `INTEGRATION.md` — embedding ZCodeToAPI in another application
+- `OPENAI_PROXY.md` — OpenAI/Codex-compatible API details
+- `CLAUDE_PROXY.md` — Claude Code / Anthropic compatibility
+- `CLI_LAUNCHER.md` — launcher isolation and CLI behavior
