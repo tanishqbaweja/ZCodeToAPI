@@ -110,6 +110,10 @@ CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
         "Claude remote control is not available through ZCodeToAPI.",
         ("Phone/claude.ai control requires Anthropic's hosted session infrastructure.",),
     ),
+    "/mobile": (
+        "Claude mobile handoff is not available through ZCodeToAPI.",
+        ("The QR-code flow attaches to Anthropic's hosted Claude session infrastructure.",),
+    ),
     "/__remote-workflow": (
         "Claude remote workflows are not available through ZCodeToAPI.",
         ("This internal command requires Anthropic's hosted cloud-agent infrastructure.",),
@@ -145,6 +149,22 @@ CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "/cloud-plugins": (
         "Claude cloud plugins are not available through ZCodeToAPI.",
         ("Local Claude Code plugins continue to work; this command targets Anthropic cloud services.",),
+    ),
+    "/stickers": (
+        "Claude Code merchandise ordering is outside ZCodeToAPI.",
+        ("This command opens an Anthropic-operated ordering flow rather than a coding-harness feature.",),
+    ),
+    "/ultrareview": (
+        "Anthropic stronger-model review is not available through ZCodeToAPI.",
+        ("ZCodeToAPI can only route the ZCode models exposed by the signed-in Start Plan account.",),
+    ),
+    "/ultraplan": (
+        "Anthropic cloud planning is not available through ZCodeToAPI.",
+        ("This command hands a plan to an Anthropic-hosted cloud session for browser review.",),
+    ),
+    "/install-slack-app": (
+        "Claude's hosted Slack-app installation is not available through ZCodeToAPI.",
+        ("This setup belongs to Anthropic's Claude/Slack service and requires a real Anthropic account.",),
     ),
     "/install-github-app": (
         "Anthropic's hosted GitHub App setup is not available through ZCodeToAPI.",

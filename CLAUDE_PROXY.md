@@ -164,9 +164,10 @@ Account / quota:
   /login /logout
 
 Anthropic cloud / remote:
-  /schedule /autofix-pr /remote-env /remote-control
+  /schedule /autofix-pr /remote-env /remote-control /mobile
   /__remote-workflow /workflow-launch-exec /team-onboarding
   /cloud-plugins /install-github-app /install-slack-app /web-setup
+  /ultraplan /ultrareview
 
 Claude Design:
   /design /design-sync /design-consent /design-revoke /design-login
@@ -179,6 +180,9 @@ Anthropic submission:
 
 Hosted research:
   /deep-research
+
+External Anthropic product extras:
+  /stickers
 ```
 
 `/deep-research` is intercepted because Claude Code exposes it as a dynamic
