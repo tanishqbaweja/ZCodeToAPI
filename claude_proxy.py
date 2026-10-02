@@ -31,6 +31,7 @@ import zcode_direct_client as zcode
 CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
 ZCODE_MODEL = "GLM-5.3-Flash"
 MODEL_ALIASES = [CLAUDE_MODEL, "claude-3-5-sonnet-20241022", "zcode-glm-5.3-flash", "glm-5.3-flash", "glm-5.3"]
+PUBLIC_MODELS = ["glm-5.3-flash", "glm-5.3"]
 REQUEST_COUNTER = 0
 
 
@@ -1124,7 +1125,13 @@ class Bridge:
             self.config_at = time.time()
         return self.config
 
-    def call(self, prompt: str, *, thinking_level: str | None = None) -> tuple[str, str, dict[str, Any] | None]:
+    def call(
+        self,
+        prompt: str,
+        *,
+        thinking_level: str | None = None,
+        backend_model: str | None = None,
+    ) -> tuple[str, str, dict[str, Any] | None]:
         token = self.get_token()
         config = self.get_config()
         verification = None
@@ -1138,7 +1145,7 @@ class Bridge:
             config=config,
             verification=verification,
             prompt=prompt,
-            model=os.environ.get("ZCODE_CLAUDE_BACKEND_MODEL", ZCODE_MODEL),
+            model=backend_model or os.environ.get("ZCODE_CLAUDE_BACKEND_MODEL", ZCODE_MODEL),
             timeout=float(os.environ.get("ZCODE_CLAUDE_PROXY_REQUEST_TIMEOUT_SECONDS", "45")),
             thinking_level=thinking_level,
         )
@@ -1403,18 +1410,40 @@ def usage_from_zcode(usage: dict[str, Any] | None) -> dict[str, int]:
     return mapped
 
 
+def request_backend_model(body: dict[str, Any]) -> str:
+    """Map Claude Code's selected model to the real ZCode backend model."""
+    requested = str(body.get("model") or "").strip().lower()
+    aliases = {
+        "glm-5.3-flash": "GLM-5.3-Flash",
+        "zcode-glm-5.3-flash": "GLM-5.3-Flash",
+        "glm-5.3": "GLM-5.3",
+    }
+    if requested in aliases:
+        return aliases[requested]
+    # Compatibility model IDs still fall back to the launcher selection. This
+    # keeps older clients working without pretending they are real ZCode IDs.
+    return os.environ.get("ZCODE_CLAUDE_BACKEND_MODEL", ZCODE_MODEL)
+
+
 def request_thinking_level(body: dict[str, Any]) -> str:
     explicit = body.get("zcode_thinking_level")
     if isinstance(explicit, str):
         return zcode.normalize_thinking_level(explicit)
 
-    env_level = os.environ.get("ZCODE_CLAUDE_THINKING_LEVEL") or os.environ.get("ZCODE_THINKING_LEVEL")
-    if env_level:
-        return zcode.normalize_thinking_level(env_level)
-
     explicit = body.get("thinking_level")
     if isinstance(explicit, str):
         return zcode.normalize_thinking_level(explicit)
+
+    # Claude Code's /effort control is sent on the next model request as
+    # output_config.effort. Honour it before the launcher's initial default so
+    # changing /effort inside the real TUI changes ZCode too.
+    output_config = body.get("output_config")
+    if isinstance(output_config, dict) and isinstance(output_config.get("effort"), str):
+        return zcode.normalize_thinking_level(output_config["effort"])
+
+    env_level = os.environ.get("ZCODE_CLAUDE_THINKING_LEVEL") or os.environ.get("ZCODE_THINKING_LEVEL")
+    if env_level:
+        return zcode.normalize_thinking_level(env_level)
 
     if os.environ.get("ZCODE_CLAUDE_RESPECT_CLIENT_THINKING", "").strip().lower() not in {"1", "true", "yes"}:
         return "low"
@@ -1622,7 +1651,7 @@ class Handler(BaseHTTPRequestHandler):
             model = os.environ.get("ZCODE_CLAUDE_BACKEND_MODEL", ZCODE_MODEL)
             self.send_json(
                 200,
-                {"data": [{"id": item, "type": "model"} for item in MODEL_ALIASES]},
+                {"data": [{"id": item, "type": "model"} for item in PUBLIC_MODELS]},
                 extra_headers=zcode_rate_limit_headers(model),
             )
         else:
@@ -1652,10 +1681,15 @@ class Handler(BaseHTTPRequestHandler):
         prompt = message_prompt(body)
         task_text = user_task_text(body)
         thinking_level = request_thinking_level(body)
+        backend_model = request_backend_model(body)
         usage = None
         reasoning = ""
         try:
-            raw_text, reasoning, usage = BRIDGE.call(prompt, thinking_level=thinking_level)
+            raw_text, reasoning, usage = BRIDGE.call(
+                prompt,
+                thinking_level=thinking_level,
+                backend_model=backend_model,
+            )
         except Exception as exc:
             if not isinstance(body.get("tools"), list) or not body.get("tools"):
                 raise
@@ -1672,7 +1706,11 @@ class Handler(BaseHTTPRequestHandler):
             and (looks_like_tool_intent(raw_text) or not raw_text.strip())
         ):
             try:
-                repaired_text, repair_reasoning, repair_usage = BRIDGE.call(tool_repair_prompt(prompt, raw_text), thinking_level=thinking_level)
+                repaired_text, repair_reasoning, repair_usage = BRIDGE.call(
+                    tool_repair_prompt(prompt, raw_text),
+                    thinking_level=thinking_level,
+                    backend_model=backend_model,
+                )
                 repaired_final, repaired_calls = parse_tool_bridge(repaired_text)
                 if repaired_calls or repaired_final != repaired_text:
                     raw_text = repaired_text
@@ -1708,10 +1746,11 @@ class Handler(BaseHTTPRequestHandler):
                 "repair_model_text": repaired_text,
                 "parsed_tool_calls": tool_calls,
                 "thinking_level": thinking_level,
+                "backend_model": backend_model,
                 "response": response,
             },
         )
-        rate_headers = zcode_rate_limit_headers(str(body.get("model") or os.environ.get("ZCODE_CLAUDE_BACKEND_MODEL", ZCODE_MODEL)))
+        rate_headers = zcode_rate_limit_headers(backend_model)
         dump_json("rate-limit-headers", request_id, rate_headers)
         if body.get("stream"):
             self.send_sse(stream_events(response), extra_headers=rate_headers)

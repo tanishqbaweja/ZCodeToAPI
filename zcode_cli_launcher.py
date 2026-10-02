@@ -12,6 +12,7 @@ import argparse
 import json
 import mmap
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -217,8 +218,7 @@ def zcode_usage_screen(data: dict[str, Any] | None, selected_model: str | None =
     preferred = [model for model in BACKEND_MODELS if model in groups]
     preferred += [model for model in groups if model not in preferred]
     for model in preferred:
-        marker = "  [selected]" if selected_model and model.lower() == selected_model.lower() else ""
-        lines.append(f"{model}{marker}")
+        lines.append(model)
         rows = sorted(
             groups[model],
             key=lambda row: (int(row.get("plan_priority") or 0), int(row.get("priority") or 0)),
@@ -523,7 +523,13 @@ def child_env(args: argparse.Namespace, kind: str, out_dir: Path) -> dict[str, s
         save_json(auth_dir / ".credentials.json", local_credentials)
         save_json(auth_dir / ".credentials-local-oauth.json", local_credentials)
         env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = str(auth_dir)
-        env["ANTHROPIC_MODEL"] = client_model_id(args.claude_model)
+        env["CLAUDE_CONFIG_DIR"] = str(
+            prepare_claude_config_dir(out_dir, Path(args.workdir).resolve())
+        )
+        # The initial model is passed with Claude's --model flag. Do not also
+        # pin ANTHROPIC_MODEL: Claude treats that environment variable as an
+        # override and /model then cannot become the real current selection.
+        env.pop("ANTHROPIC_MODEL", None)
         env["ZCODE_CLAUDE_BACKEND_MODEL"] = args.claude_model
         env["ZCODE_CLAUDE_THINKING_LEVEL"] = args.claude_thinking
         env["ZCODE_CLAUDE_RESPECT_CLIENT_THINKING"] = "1" if args.respect_client_thinking else "0"
@@ -539,6 +545,50 @@ def child_env(args: argparse.Namespace, kind: str, out_dir: Path) -> dict[str, s
 
 def split_extra(value: str | None) -> list[str]:
     return shlex.split(value or "", posix=False)
+
+
+def _claude_project_dir_name(workdir: Path) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "-", str(workdir))
+
+
+def prepare_claude_config_dir(out_dir: Path, workdir: Path) -> Path:
+    """Clone the useful parts of ~/.claude into a per-run writable config.
+
+    This preserves normal settings/plugins/session context while ensuring
+    commands such as /model, /effort, and /config never modify the user's
+    permanent Claude Code configuration.
+    """
+    source = Path.home() / ".claude"
+    target = out_dir / "claude-config"
+    target.mkdir(parents=True, exist_ok=True)
+    if not source.exists():
+        return target
+
+    for name in (
+        "settings.json",
+        "keybindings.json",
+        "CLAUDE.md",
+        "history.jsonl",
+        "stats-cache.json",
+    ):
+        src = source / name
+        if src.is_file():
+            shutil.copy2(src, target / name)
+
+    for name in ("plugins", "commands", "agents", "skills", "sessions"):
+        src = source / name
+        if src.is_dir():
+            shutil.copytree(src, target / name, dirs_exist_ok=True)
+
+    project_name = _claude_project_dir_name(workdir)
+    project_src = source / "projects" / project_name
+    if project_src.is_dir():
+        shutil.copytree(
+            project_src,
+            target / "projects" / project_name,
+            dirs_exist_ok=True,
+        )
+    return target
 
 
 def codex_command(args: argparse.Namespace, prompt: str | None) -> list[str]:
@@ -645,6 +695,14 @@ def run_claude_interactive_pty(cmd: list[str], env: dict[str, str], cwd: Path, o
     """
     import msvcrt
     from winpty import PtyProcess
+
+    # Claude's TUI uses Unicode spinners/symbols. Python can inherit a legacy
+    # Windows code page when the launcher itself is hosted inside another PTY,
+    # which would otherwise crash the relay on characters such as ✳.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
     size = shutil.get_terminal_size((140, 40))
     rows, columns = max(20, size.lines), max(80, size.columns)

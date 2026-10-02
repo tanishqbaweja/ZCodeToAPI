@@ -1,11 +1,11 @@
-# ZCode Direct Client
+# ZCodeToAPI
 
 This project lets you use your own ZCode account from a Python script or from your own app.
 
 In simple terms:
 
 ```text
-Your app or script -> ZCode Start Plan endpoint -> GLM-5.3-Flash -> response
+Your app or script -> ZCode Start Plan endpoint -> GLM-5.3 / GLM-5.3-Flash -> response
 ```
 
 It does **not** open or control the ZCode desktop app for each message. It still uses ZCode's backend and a real ZCode account that is allowed to use Start Plan.
@@ -15,10 +15,11 @@ It does **not** open or control the ZCode desktop app for each message. It still
 You can use this project to:
 
 - test the ZCode Start Plan endpoint from Python
-- send prompts to GLM-5.3-Flash through the ZCode Start Plan backend
+- send prompts to GLM-5.3 or GLM-5.3-Flash through the ZCode Start Plan backend
 - use the endpoint inside your own local app
 - run a local OpenAI-compatible proxy server for tools that support custom OpenAI base URLs
 - run a local Claude/Anthropic-compatible proxy server for Claude Code
+- launch real Codex or Claude Code sessions through isolated local proxy settings
 
 This is **not** a raw Z.ai API key client. It is an unofficial interoperability client for the ZCode Start Plan endpoint.
 
@@ -151,6 +152,30 @@ Both proxies expose current quota/balance:
 /v1/zcode/balance
 ```
 
+## Claude Code launcher
+
+On Windows, the easiest Claude Code path is:
+
+```bat
+zcode-cli-launcher.cmd
+```
+
+Choose Claude, then choose the real ZCode model and the initial thinking level.
+The launcher keeps its credentials, patched compatibility runtime, and writable
+Claude configuration isolated from your normal installed Claude Code setup.
+
+Inside that Claude Code session:
+
+- `/model glm-5.3` switches subsequent inference to real `GLM-5.3`.
+- `/model glm-5.3-flash` switches subsequent inference to real `GLM-5.3-Flash`.
+- `/effort` changes the ZCode thinking level used on subsequent requests.
+- `/usage` is intercepted by the launcher and shows ZCode's real **daily**
+  model buckets instead of Claude's unrelated 5-hour/weekly subscription labels.
+
+The proxy reads Claude Code's actual request model and
+`output_config.effort`, so changing these controls in Claude changes the
+upstream ZCode request rather than only changing the text shown in the TUI.
+
 ## How to use a different ZCode account
 
 The simplest method:
@@ -208,7 +233,10 @@ Keeping the stock template and steering behavior through user messages:
 works
 ```
 
-So for now, keep `start_plan_request_template.json` unchanged.
+So for now, keep the behavioral contents of `start_plan_request_template.json`
+unchanged. The checked-in template replaces the captured Windows user path
+with a placeholder; `zcode_direct_client.py` restores the local workspace path
+in memory at runtime so no machine-specific username is stored in Git.
 
 If you want your app to give the model a custom identity or behavior, put that instruction in the message history instead of replacing the system prompt.
 

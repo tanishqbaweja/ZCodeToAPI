@@ -3,7 +3,7 @@
 This proxy exposes a local Anthropic Messages API compatible endpoint and forwards model work to the ZCode Start Plan backend.
 
 ```text
-Claude Code -> local Claude proxy -> ZCode Start Plan backend -> GLM-5.3-Flash
+Claude Code -> local Claude proxy -> ZCode Start Plan backend -> GLM-5.3 / GLM-5.3-Flash
 ```
 
 ## Start the proxy
@@ -32,7 +32,9 @@ set ANTHROPIC_MODEL=claude-sonnet-4-5-20250929
 
 When using `zcode-cli-launcher.cmd`, you do not need to set any of these variables manually and you do not need a real Anthropic API key or Anthropic login. The launcher gives Claude Code a per-run isolated `claudeAiOauth` credential whose access token is valid only against the local proxy. The proxy authenticates upstream with the user's ZCode credentials. The user's normal Claude credential store is left unchanged.
 
-Launcher sessions also expose ZCode quota through Claude Code's native subscription usage path. The proxy returns `anthropic-ratelimit-unified-*` headers on model responses and implements local `/api/oauth/profile` and `/api/oauth/usage` compatibility endpoints, including the launcher's `/zcode-oauth-bridge/...` prefixed form. Claude's built-in `/usage` therefore reads ZCode utilization/reset state directly, including before the first inference request.
+The launcher also clones the useful parts of the user's Claude configuration into a per-run writable directory and sets `CLAUDE_CONFIG_DIR` to that copy. Normal settings, plugins, current-project sessions, and memory remain available, while slash commands such as `/model`, `/effort`, and `/config` cannot modify the permanent `~/.claude` configuration.
+
+The proxy still returns `anthropic-ratelimit-unified-*` headers on model responses and implements local `/api/oauth/profile` and `/api/oauth/usage` compatibility endpoints, including the launcher's `/zcode-oauth-bridge/...` prefixed form. ZCode limits are daily while Claude's built-in Usage page labels its native windows as 5-hour/week, so the Windows launcher intercepts the exact `/usage` command and renders the real ZCode daily buckets instead of showing the wrong period labels.
 
 Claude Code's production binary normally hard-codes the OAuth/admin base URL and does not route `/api/oauth/usage` through `ANTHROPIC_BASE_URL`. The launcher solves that without altering the installed CLI by building a cached project-local compatibility copy under `.runtime` and changing one OAuth allowlist string in that copy only. The global `claude.exe` / npm wrapper remain untouched.
 
@@ -62,7 +64,7 @@ ANTHROPIC_API_KEY=local
 ANTHROPIC_MODEL=claude-sonnet-4-5-20250929
 ```
 
-The model name is only an Anthropic-compatible alias. The actual backend model used by this project is `GLM-5.3-Flash` through ZCode Start Plan.
+For direct manual proxy configurations, compatibility aliases still exist. Launcher sessions expose and use the real ZCode model IDs `glm-5.3-flash` and `glm-5.3`.
 
 ## Supported endpoints
 
@@ -103,6 +105,25 @@ Per-request override:
 
 If Claude Code sends `thinking.budget_tokens`, the proxy maps large budgets to `max`, mid-size budgets to `high`, and small budgets to `low`.
 
+In normal launcher sessions, Claude Code sends its `/effort` choice as
+`output_config.effort`. The proxy gives that value priority over the launcher's
+initial default, so changing `/effort` changes the real ZCode thinking level on
+subsequent inference calls.
+
+## Model switching
+
+Claude Code's request `model` field is mapped per request:
+
+```text
+glm-5.3-flash -> GLM-5.3-Flash
+glm-5.3       -> GLM-5.3
+```
+
+The launcher deliberately does not set `ANTHROPIC_MODEL`, because that
+environment variable pins Claude Code's model and prevents `/model` from
+becoming the real current selection. The initial selection is supplied with
+Claude's `--model` flag instead.
+
 ## Usage / quota
 
 The proxy exposes ZCode quota at:
@@ -112,6 +133,9 @@ http://127.0.0.1:8788/v1/zcode/balance
 ```
 
 This includes all active buckets, including promotional Trust Build buckets such as a 100,000,000 token GLM-5.3-Flash bucket, plus the normal Start Plan GLM-5.3 and GLM-5.3-Flash buckets.
+
+When launched through `zcode-cli-launcher.cmd`, typing `/usage` shows those
+buckets as daily limits with exact used, remaining, total, and reset values.
 
 ## Tool-call bridge
 
