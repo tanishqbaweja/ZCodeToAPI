@@ -137,6 +137,62 @@ This includes all active buckets, including promotional Trust Build buckets such
 When launched through `zcode-cli-launcher.cmd`, typing `/usage` shows those
 buckets as daily limits with exact used, remaining, total, and reset values.
 
+## Slash-command compatibility
+
+Normal local Claude Code commands continue to run in the real Claude TUI. This
+includes configuration/context views, MCP and plugin management, local agents,
+local skills, model selection, effort selection, compaction, rename, reload,
+and the normal coding/review/tool workflows. The launcher does not replace
+those commands.
+
+Commands that specifically require Anthropic account, billing, hosted cloud
+agents, Claude Design, hosted WebSearch/Deep Research, provider setup, or
+Anthropic submission endpoints are intercepted before Claude can call those
+services. Instead of showing a misleading login/billing/network failure, the
+launcher explains why the command is unavailable and returns to Claude Code
+with Esc.
+
+The intercepted command set currently includes:
+
+```text
+/fast
+/deep-research
+/usage-credits
+/extra-usage
+/upgrade
+/rate-limit-options
+/limit-reset
+/passes
+/powerup
+/pro-trial-expired
+/privacy-settings
+/schedule
+/autofix-pr
+/remote-env
+/remote-control
+/__remote-workflow
+/workflow-launch-exec
+/team-onboarding
+/design
+/design-sync
+/design-consent
+/design-revoke
+/design-login
+/cloud-plugins
+/install-github-app
+/setup-bedrock
+/setup-vertex
+/web-setup
+/feedback
+/bug
+/login
+/logout
+```
+
+`/usage` is handled separately: it is intentionally replaced by the ZCode
+daily-quota screen because Claude's native subscription UI uses incompatible
+5-hour/weekly labels.
+
 ## Tool-call bridge
 
 The proxy supports Anthropic tool use:

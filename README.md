@@ -176,6 +176,12 @@ The proxy reads Claude Code's actual request model and
 `output_config.effort`, so changing these controls in Claude changes the
 upstream ZCode request rather than only changing the text shown in the TUI.
 
+Claude commands that belong to Anthropic's own billing/account/cloud services
+are also caught by the launcher and shown as clearly unsupported instead of
+falling through to confusing login or subscription errors. Local Claude Code
+commands and normal coding-agent workflows continue to pass through unchanged.
+See `CLAUDE_PROXY.md` for the current compatibility list.
+
 ## How to use a different ZCode account
 
 The simplest method:

@@ -38,6 +38,148 @@ BACKEND_MODELS = ["GLM-5.3-Flash", "GLM-5.3"]
 THINKING = ["low", "high", "max"]
 CLAUDE_OAUTH_ALLOWLIST_SOURCE = b"https://beacon.claude-ai.staging.ant.dev"
 
+# These slash commands are features of Anthropic's own account/billing/cloud
+# services, not of the Messages API. Letting them continue inside a ZCode
+# gateway session produces confusing login, subscription, or remote-service
+# errors. Intercept them explicitly while leaving normal local Claude Code
+# commands untouched.
+CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "/fast": (
+        "Anthropic Fast Mode is not available through ZCodeToAPI.",
+        (
+            "ZCode has no equivalent Opus Fast Mode entitlement.",
+            "For a faster ZCode session, use /model glm-5.3-flash and choose a lower /effort.",
+        ),
+    ),
+    "/deep-research": (
+        "Claude's hosted Deep Research search path is not available through ZCodeToAPI.",
+        (
+            "The model bridge works, but Claude's first-party WebSearch service is not backed by the ZCode API.",
+            "Use normal Claude Code prompts with local tools, MCP search tools, or another configured search source instead.",
+        ),
+    ),
+    "/usage-credits": (
+        "Anthropic usage credits are not used by ZCodeToAPI.",
+        ("Use /usage to see the real ZCode daily model limits.",),
+    ),
+    "/extra-usage": (
+        "Anthropic extra-usage billing is not used by ZCodeToAPI.",
+        ("Use /usage to see the real ZCode daily model limits.",),
+    ),
+    "/upgrade": (
+        "Anthropic plan upgrades are not used by ZCodeToAPI.",
+        ("ZCode access and quota come from the signed-in ZCode account.",),
+    ),
+    "/rate-limit-options": (
+        "Anthropic rate-limit upgrade options are not used by ZCodeToAPI.",
+        ("Use /usage to see the real ZCode daily model limits.",),
+    ),
+    "/limit-reset": (
+        "Anthropic subscription limit resets are not used by ZCodeToAPI.",
+        ("ZCode's daily limits and reset times are shown by /usage.",),
+    ),
+    "/passes": (
+        "Anthropic usage passes are not used by ZCodeToAPI.",
+        ("ZCode access and quota come from the signed-in ZCode account.",),
+    ),
+    "/powerup": (
+        "Anthropic account power-ups are not used by ZCodeToAPI.",
+        ("ZCode access and quota come from the signed-in ZCode account.",),
+    ),
+    "/pro-trial-expired": (
+        "Anthropic trial/account upgrade flows are not used by ZCodeToAPI.",
+        ("ZCode access and quota come from the signed-in ZCode account.",),
+    ),
+    "/privacy-settings": (
+        "Anthropic account privacy settings are not managed by ZCodeToAPI.",
+        ("Change Anthropic account settings outside this isolated gateway session.",),
+    ),
+    "/schedule": (
+        "Claude cloud schedules are not available through ZCodeToAPI.",
+        ("This command requires Anthropic's hosted cloud-agent infrastructure.",),
+    ),
+    "/autofix-pr": (
+        "Claude's hosted PR autofix workflow is not available through ZCodeToAPI.",
+        ("This feature launches Anthropic cloud-agent work rather than a local model request.",),
+    ),
+    "/remote-env": (
+        "Claude remote environments are not available through ZCodeToAPI.",
+        ("This command requires Anthropic's hosted cloud-agent infrastructure.",),
+    ),
+    "/remote-control": (
+        "Claude remote control is not available through ZCodeToAPI.",
+        ("Phone/claude.ai control requires Anthropic's hosted session infrastructure.",),
+    ),
+    "/__remote-workflow": (
+        "Claude remote workflows are not available through ZCodeToAPI.",
+        ("This internal command requires Anthropic's hosted cloud-agent infrastructure.",),
+    ),
+    "/workflow-launch-exec": (
+        "Claude remote workflow execution is not available through ZCodeToAPI.",
+        ("This internal command requires Anthropic's hosted cloud-agent infrastructure.",),
+    ),
+    "/team-onboarding": (
+        "Anthropic organization onboarding is not available through ZCodeToAPI.",
+        ("The launcher uses an isolated local gateway identity, not an Anthropic organization.",),
+    ),
+    "/design": (
+        "Claude Design is not available through ZCodeToAPI.",
+        ("This command connects to claude.ai/design and requires Anthropic account authorization.",),
+    ),
+    "/design-sync": (
+        "Claude Design Sync is not available through ZCodeToAPI.",
+        ("This command uploads or downloads design-system data through claude.ai/design.",),
+    ),
+    "/design-consent": (
+        "Claude Design authorization is not available through ZCodeToAPI.",
+        ("This command grants access against a real claude.ai account.",),
+    ),
+    "/design-revoke": (
+        "Claude Design authorization is not available through ZCodeToAPI.",
+        ("This command revokes access against a real claude.ai account.",),
+    ),
+    "/design-login": (
+        "Claude Design login is not available through ZCodeToAPI.",
+        ("This command authorizes design-system access against a real claude.ai account.",),
+    ),
+    "/cloud-plugins": (
+        "Claude cloud plugins are not available through ZCodeToAPI.",
+        ("Local Claude Code plugins continue to work; this command targets Anthropic cloud services.",),
+    ),
+    "/install-github-app": (
+        "Anthropic's hosted GitHub App setup is not available through ZCodeToAPI.",
+        ("Local git, gh, and Claude Code repository tools remain available.",),
+    ),
+    "/setup-bedrock": (
+        "Provider setup is disabled inside ZCodeToAPI gateway sessions.",
+        ("This session is intentionally routed to ZCode; configure Bedrock in a normal Claude Code session.",),
+    ),
+    "/setup-vertex": (
+        "Provider setup is disabled inside ZCodeToAPI gateway sessions.",
+        ("This session is intentionally routed to ZCode; configure Vertex in a normal Claude Code session.",),
+    ),
+    "/web-setup": (
+        "Anthropic web setup is not available through ZCodeToAPI.",
+        ("This isolated gateway session does not attach itself to Anthropic's hosted web session.",),
+    ),
+    "/feedback": (
+        "Anthropic product feedback submission is disabled in ZCodeToAPI sessions.",
+        ("This prevents an isolated gateway session from trying to submit data to an Anthropic account.",),
+    ),
+    "/bug": (
+        "Anthropic bug-report submission is disabled in ZCodeToAPI sessions.",
+        ("This prevents an isolated gateway session from trying to submit data to Anthropic.",),
+    ),
+    "/login": (
+        "Anthropic login is intentionally disabled in ZCodeToAPI sessions.",
+        ("The launcher already provides isolated local gateway authentication.",),
+    ),
+    "/logout": (
+        "Anthropic logout is intentionally disabled in ZCodeToAPI sessions.",
+        ("The launcher does not modify your normal Claude Code login.",),
+    ),
+}
+
 
 def client_model_id(backend_model: str) -> str:
     return backend_model.lower()
@@ -708,6 +850,7 @@ def run_claude_interactive_pty(cmd: list[str], env: dict[str, str], cwd: Path, o
     rows, columns = max(20, size.lines), max(80, size.columns)
     proc = PtyProcess.spawn(cmd, cwd=str(cwd), env=env, dimensions=(rows, columns))
     overlay = threading.Event()
+    overlay_kind = ""
     finished = threading.Event()
     output_lock = threading.Lock()
     log_path = out_dir / "claude-tui.log"
@@ -741,14 +884,44 @@ def run_claude_interactive_pty(cmd: list[str], env: dict[str, str], cwd: Path, o
     line_is_simple = True
 
     def show_usage() -> None:
+        nonlocal overlay_kind
+        overlay_kind = "usage"
         overlay.set()
         screen = zcode_usage_screen(usage_snapshot(), env.get("ZCODE_CLAUDE_BACKEND_MODEL"))
         log.write("\n\n[LAUNCHER /usage OVERLAY]\n" + screen + "\n[END OVERLAY]\n")
         log.flush()
         emit(screen)
 
-    def leave_usage() -> None:
+    def show_unsupported(command: str, title: str, detail: tuple[str, ...]) -> None:
+        nonlocal overlay_kind
+        overlay_kind = "unsupported"
+        overlay.set()
+        lines = [
+            "\x1b[2J\x1b[H",
+            "ZCodeToAPI",
+            "==========",
+            "",
+            title,
+            "",
+            *detail,
+            "",
+            f"Command: {command}",
+            "",
+            "Esc return to Claude Code",
+        ]
+        screen = "\r\n".join(lines)
+        log.write(
+            f"\n\n[LAUNCHER UNSUPPORTED COMMAND {command}]\n"
+            + screen
+            + "\n[END OVERLAY]\n"
+        )
+        log.flush()
+        emit(screen)
+
+    def leave_overlay() -> None:
+        nonlocal overlay_kind
         overlay.clear()
+        overlay_kind = ""
         emit("\x1b[2J\x1b[H")
         try:
             proc.setwinsize(rows, columns)
@@ -770,8 +943,8 @@ def run_claude_interactive_pty(cmd: list[str], env: dict[str, str], cwd: Path, o
 
             if overlay.is_set():
                 if ch in {"\x1b", "q", "Q"}:
-                    leave_usage()
-                elif ch in {"r", "R"}:
+                    leave_overlay()
+                elif overlay_kind == "usage" and ch in {"r", "R"}:
                     show_usage()
                 continue
 
@@ -785,6 +958,7 @@ def run_claude_interactive_pty(cmd: list[str], env: dict[str, str], cwd: Path, o
 
             if ch in {"\r", "\n"}:
                 typed = "".join(line).strip() if line_is_simple else ""
+                command = typed.split(None, 1)[0].lower() if typed.startswith("/") else ""
                 if typed == "/usage":
                     # Remove the command from Claude's composer before it can
                     # enter Claude's own misleading weekly usage screen.
@@ -793,6 +967,14 @@ def run_claude_interactive_pty(cmd: list[str], env: dict[str, str], cwd: Path, o
                     line.clear()
                     line_is_simple = True
                     show_usage()
+                    continue
+                unsupported = CLAUDE_UNSUPPORTED_SLASH_COMMANDS.get(command)
+                if unsupported:
+                    proc.write("\x15")
+                    time.sleep(0.05)
+                    line.clear()
+                    line_is_simple = True
+                    show_unsupported(command, unsupported[0], unsupported[1])
                     continue
                 proc.write("\r")
                 line.clear()
