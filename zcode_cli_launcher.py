@@ -820,7 +820,15 @@ def run_dir(label: str) -> Path:
     return path
 
 
-def start_proxy(kind: str, host: str, port: int, thinking: str, backend_model: str, out_dir: Path) -> subprocess.Popen[str]:
+def start_proxy(
+    kind: str,
+    host: str,
+    port: int,
+    thinking: str,
+    backend_model: str,
+    out_dir: Path,
+    proxy_api_key: str,
+) -> subprocess.Popen[str]:
     clear_stale_proxy(kind, host, port)
     env = os.environ.copy()
     if kind == "codex":
@@ -828,7 +836,7 @@ def start_proxy(kind: str, host: str, port: int, thinking: str, backend_model: s
         env["ZCODE_PROXY_THINKING_LEVEL"] = thinking
         env["ZCODE_PROXY_BACKEND_MODEL"] = backend_model
         env["ZCODE_PROXY_DUMP_DIR"] = str(out_dir / "codex-proxy-dumps")
-        env["ZCODE_PROXY_API_KEY"] = "local"
+        env["ZCODE_PROXY_API_KEY"] = proxy_api_key
     else:
         script = "claude_proxy.py"
         env["ZCODE_CLAUDE_THINKING_LEVEL"] = thinking
@@ -1652,7 +1660,15 @@ def run_one(kind: str, args: argparse.Namespace, out_dir: Path, prompt: str | No
             args.claude_runtime_bin = runtime
             args.claude_oauth_base = oauth_base
         if not args.no_proxy:
-            proc = start_proxy(kind, args.host, port, thinking, backend_model, out_dir)
+            proc = start_proxy(
+                kind,
+                args.host,
+                port,
+                thinking,
+                backend_model,
+                out_dir,
+                args.proxy_api_key,
+            )
         if args.proxy_only:
             print(f"[{kind}] proxy running. Ctrl+C to stop.")
             while True:
