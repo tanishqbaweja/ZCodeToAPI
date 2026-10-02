@@ -150,6 +150,10 @@ CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
         "Anthropic's hosted GitHub App setup is not available through ZCodeToAPI.",
         ("Local git, gh, and Claude Code repository tools remain available.",),
     ),
+    "/install-slack-app": (
+        "Claude Tag / Slack app installation is not available through ZCodeToAPI.",
+        ("This setup is tied to a real Anthropic/Claude account and hosted Slack integration.",),
+    ),
     "/setup-bedrock": (
         "Provider setup is disabled inside ZCodeToAPI gateway sessions.",
         ("This session is intentionally routed to ZCode; configure Bedrock in a normal Claude Code session.",),
@@ -179,6 +183,21 @@ CLAUDE_UNSUPPORTED_SLASH_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
         ("The launcher does not modify your normal Claude Code login.",),
     ),
 }
+
+
+def claude_launcher_intercept(typed: str) -> tuple[str, str, str, tuple[str, ...]] | None:
+    """Return launcher-owned handling for an exact submitted Claude command."""
+    stripped = typed.strip()
+    if stripped == "/usage":
+        return ("usage", "/usage", "", ())
+    if not stripped.startswith("/"):
+        return None
+    command = stripped.split(None, 1)[0].lower()
+    unsupported = CLAUDE_UNSUPPORTED_SLASH_COMMANDS.get(command)
+    if unsupported is None:
+        return None
+    title, detail = unsupported
+    return ("unsupported", command, title, detail)
 
 
 def client_model_id(backend_model: str) -> str:
@@ -959,8 +978,8 @@ def run_claude_interactive_pty(cmd: list[str], env: dict[str, str], cwd: Path, o
 
             if ch in {"\r", "\n"}:
                 typed = "".join(line).strip() if line_is_simple else ""
-                command = typed.split(None, 1)[0].lower() if typed.startswith("/") else ""
-                if typed == "/usage":
+                intercept = claude_launcher_intercept(typed)
+                if intercept and intercept[0] == "usage":
                     # Remove the command from Claude's composer before it can
                     # enter Claude's own misleading weekly usage screen.
                     proc.write("\x15")
@@ -969,13 +988,12 @@ def run_claude_interactive_pty(cmd: list[str], env: dict[str, str], cwd: Path, o
                     line_is_simple = True
                     show_usage()
                     continue
-                unsupported = CLAUDE_UNSUPPORTED_SLASH_COMMANDS.get(command)
-                if unsupported:
+                if intercept and intercept[0] == "unsupported":
                     proc.write("\x15")
                     time.sleep(0.05)
                     line.clear()
                     line_is_simple = True
-                    show_unsupported(command, unsupported[0], unsupported[1])
+                    show_unsupported(intercept[1], intercept[2], intercept[3])
                     continue
                 proc.write("\r")
                 line.clear()

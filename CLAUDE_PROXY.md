@@ -166,7 +166,7 @@ Account / quota:
 Anthropic cloud / remote:
   /schedule /autofix-pr /remote-env /remote-control
   /__remote-workflow /workflow-launch-exec /team-onboarding
-  /cloud-plugins /install-github-app /web-setup
+  /cloud-plugins /install-github-app /install-slack-app /web-setup
 
 Claude Design:
   /design /design-sync /design-consent /design-revoke /design-login
@@ -181,12 +181,12 @@ Hosted research:
   /deep-research
 ```
 
-`/deep-research` is intercepted because a real Claude Code `WebSearch` tool
-call was tested through the isolated gateway and the first-party search layer
-returned an empty result set. The model/tool bridge itself completed, but
-silently treating an empty hosted search as working research would be
-misleading. Normal prompts can still use local tools, MCP search providers, or
-other search integrations configured by the user.
+`/deep-research` is intercepted because Claude Code exposes it as a dynamic
+workflow built around hosted web-search/fetch capabilities rather than a plain
+Messages API model turn. ZCodeToAPI does not pretend that Anthropic-hosted
+research infrastructure exists behind the ZCode gateway. Normal prompts can
+still use local tools, MCP search providers, or other search integrations
+configured by the user.
 
 ## Tool-call bridge
 
