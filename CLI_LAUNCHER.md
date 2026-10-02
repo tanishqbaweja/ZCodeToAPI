@@ -218,6 +218,37 @@ The proxy maps ZCode backend usage into OpenAI/Anthropic-compatible response fie
 zcode-cli-launcher.cmd usage --json
 ```
 
+## Claiming promotional Start Plan grants
+
+The launcher can query and claim ZCode's manual Start Plan grants without
+opening the ZCode desktop application:
+
+```bat
+zcode-cli-launcher.cmd claim-preview
+zcode-cli-launcher.cmd claim
+```
+
+`claim-preview` is read-only and shows the live plan IDs and grant amounts
+returned by `/api/v1/zcode-plan/billing/preview`.
+
+`claim` auto-selects the largest currently claimable GLM-5.3-Flash grant and
+uses ZCode's real `/api/v1/zcode-plan/billing/claim` endpoint. Claims require
+a fresh Aliyun CAPTCHA verification. The launcher uses the official Aliyun SDK
+and attempts traceless verification first; if Aliyun upgrades the attempt to
+an interactive challenge, only the verifier page needs to be completed.
+
+For automation that already has a fresh verification value:
+
+```bat
+zcode-cli-launcher.cmd claim --captcha-verify-param "<value>"
+```
+
+To inspect eligibility without opening a verifier:
+
+```bat
+zcode-cli-launcher.cmd claim --no-browser --json
+```
+
 ## Smoke-tested
 
 Validated locally:

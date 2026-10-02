@@ -19,10 +19,13 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
 APP_VERSION = "3.14.4"
+PLATFORM = "win32-x64"
 ORIGIN = "https://zcode.z.ai"
 CONFIG_URL = f"{ORIGIN}/api/v1/client/configs"
 MODEL_URL = f"{ORIGIN}/api/v1/zcode-plan/anthropic/v1/messages"
 BALANCE_URL = f"{ORIGIN}/api/v1/zcode-plan/billing/balance"
+CLAIM_PREVIEW_URL = f"{ORIGIN}/api/v1/zcode-plan/billing/preview"
+CLAIM_URL = f"{ORIGIN}/api/v1/zcode-plan/billing/claim"
 ALIYUN_SDK_URL = "https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js"
 REQUEST_TEMPLATE_PATH = Path(__file__).resolve().with_name("start_plan_request_template.json")
 DIAGNOSTICS_PATH = Path(__file__).resolve().with_name("zcode-recovery-logs") / "captcha-verifier-latest.jsonl"
@@ -133,7 +136,7 @@ def base_headers(token: str, *, model_request: bool = False) -> dict[str, str]:
         "HTTP-Referer": ORIGIN,
         "X-Title": "Z Code@electron",
         "X-ZCode-App-Version": APP_VERSION,
-        "X-Platform": "win32-x64",
+        "X-Platform": PLATFORM,
         "X-Release-Channel": "production",
         "X-Client-Language": "en-IN",
         "X-Client-Timezone": "Asia/Calcutta",
@@ -166,10 +169,10 @@ def uuid7_like() -> str:
     return str(uuid.UUID(int=value))
 
 
-def fetch_captcha_config(token: str) -> dict:
+def fetch_captcha_config(token: str, *, require_valid: bool = True) -> dict:
     response = requests.get(
         CONFIG_URL,
-        params={"app_version": APP_VERSION, "platform": "win32-x64"},
+        params={"app_version": APP_VERSION, "platform": PLATFORM},
         headers=base_headers(token),
         timeout=20,
     )
@@ -177,11 +180,17 @@ def fetch_captcha_config(token: str) -> dict:
     body = response.json()
     captcha = ((body.get("data") or {}).get("configs") or {}).get("captcha")
     if not isinstance(captcha, dict):
-        raise RuntimeError("Server did not return data.configs.captcha")
+        if require_valid:
+            raise RuntimeError("Server did not return data.configs.captcha")
+        return {}
+    if captcha.get("enabled") is False:
+        return captcha
     required = ["region", "prefix", "sceneId"]
     missing = [key for key in required if not str(captcha.get(key, "")).strip()]
     if missing:
-        raise RuntimeError(f"Captcha config is missing: {', '.join(missing)}")
+        if require_valid:
+            raise RuntimeError(f"Captcha config is missing: {', '.join(missing)}")
+        return {}
     return captcha
 
 
@@ -194,6 +203,231 @@ def fetch_billing_balance(token: str) -> dict:
     )
     response.raise_for_status()
     return response.json()
+
+
+def fetch_manual_claim_preview(token: str) -> dict:
+    response = requests.get(
+        CLAIM_PREVIEW_URL,
+        params={"app_version": APP_VERSION, "platform": PLATFORM},
+        headers=base_headers(token),
+        timeout=20,
+    )
+    response.raise_for_status()
+    body = response.json()
+    code = body.get("code")
+    if code not in (None, 0, "0"):
+        raise RuntimeError(
+            str(body.get("msg") or body.get("message") or "manual_claim_preview_failed")
+        )
+    return body
+
+
+def summarize_manual_claim_preview(body: dict) -> dict:
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, dict):
+        data = {}
+    plans = []
+    for raw_plan in data.get("plans") or []:
+        if not isinstance(raw_plan, dict):
+            continue
+        plan_id = str(raw_plan.get("plan_id") or "").strip()
+        if not plan_id:
+            continue
+        entitlements = []
+        for raw_entitlement in raw_plan.get("entitlements") or []:
+            if not isinstance(raw_entitlement, dict):
+                continue
+            entitlements.append(
+                {
+                    "entitlement_id": raw_entitlement.get("entitlement_id"),
+                    "show_name": raw_entitlement.get("show_name"),
+                    "meter": raw_entitlement.get("meter"),
+                    "unit_type": raw_entitlement.get("unit_type"),
+                    "capabilities": raw_entitlement.get("capabilities") or [],
+                    "grant_units": int(raw_entitlement.get("grant_units") or 0),
+                    "period": raw_entitlement.get("period"),
+                    "priority": raw_entitlement.get("priority"),
+                    "effective_at": raw_entitlement.get("effective_at"),
+                }
+            )
+        plans.append(
+            {
+                "plan_id": plan_id,
+                "name": raw_plan.get("name"),
+                "description": raw_plan.get("description"),
+                "priority": raw_plan.get("priority"),
+                "entitlements": entitlements,
+            }
+        )
+    summary = {
+        "server_time": data.get("server_time"),
+        "plans": plans,
+        "raw": body,
+    }
+    try:
+        summary["recommended_plan"] = select_manual_claim_plan(summary)
+    except RuntimeError:
+        summary["recommended_plan"] = None
+    return summary
+
+
+def select_manual_claim_plan(
+    preview: dict,
+    *,
+    plan_id: str | None = None,
+    capability: str = "model:glm-5.3-flash",
+) -> dict:
+    summary = (
+        preview
+        if isinstance(preview.get("plans"), list) and "data" not in preview
+        else summarize_manual_claim_preview(preview)
+    )
+    plans = summary.get("plans") or []
+    if plan_id:
+        wanted = plan_id.strip()
+        for plan in plans:
+            if str(plan.get("plan_id") or "") == wanted:
+                return plan
+        raise RuntimeError(f"Claim plan is not currently available: {wanted}")
+
+    candidates = []
+    for plan in plans:
+        matching = [
+            entitlement
+            for entitlement in plan.get("entitlements") or []
+            if capability.lower()
+            in [str(item).lower() for item in entitlement.get("capabilities") or []]
+        ]
+        grants = [int(entitlement.get("grant_units") or 0) for entitlement in matching]
+        if not grants:
+            continue
+        identity = f"{plan.get('plan_id') or ''} {plan.get('name') or ''}".lower()
+        trust_100m = "trust" in identity and max(grants) >= 100_000_000
+        candidates.append(
+            (
+                1 if trust_100m else 0,
+                max(grants),
+                int(plan.get("priority") or 0),
+                plan,
+            )
+        )
+    if not candidates:
+        raise RuntimeError(
+            f"No currently claimable ZCode plan grants {capability}."
+        )
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    return candidates[0][3]
+
+
+def claim_manual_plan(
+    token: str,
+    *,
+    plan_id: str,
+    captcha_verify_param: str | None = None,
+    captcha_region: str | None = None,
+    timeout: float = 20.0,
+) -> dict:
+    headers = base_headers(token)
+    headers["Content-Type"] = "application/json"
+    verification = (captcha_verify_param or "").strip()
+    if not verification:
+        raise RuntimeError("A fresh Aliyun CAPTCHA verification value is required.")
+    headers["X-Aliyun-Captcha-Verify-Param"] = verification
+    region = (captcha_region or "").strip()
+    if region:
+        headers["X-Aliyun-Captcha-Verify-Region"] = region
+    response = requests.post(
+        CLAIM_URL,
+        headers=headers,
+        json={"plan_id": plan_id},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    body = response.json()
+    raw_code = body.get("code")
+    try:
+        code = int(raw_code) if raw_code is not None else -1
+    except (TypeError, ValueError):
+        code = -1
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    plan = data.get("plan") if isinstance(data.get("plan"), dict) else None
+    success = code == 0 and plan is not None
+    result = {
+        "success": success,
+        "code": code,
+        "message": str(
+            (data.get("message") if isinstance(data, dict) else None)
+            or body.get("msg")
+            or ""
+        ),
+        "server_time": data.get("server_time") if isinstance(data, dict) else None,
+        "terminal": (not success and code in {1001, 1002, 1003, 1004, 1005}),
+        "raw": body,
+    }
+    if plan is not None:
+        result["plan"] = plan
+        if not success and plan.get("ends_at") is not None:
+            result["failure_ends_at"] = plan.get("ends_at")
+    return result
+
+
+def claim_available_start_plan(
+    token: str,
+    *,
+    plan_id: str | None = None,
+    captcha_verify_param: str | None = None,
+    captcha_region: str | None = None,
+    interactive_verification: bool = False,
+    verification_timeout: float = 120.0,
+) -> dict:
+    preview_raw = fetch_manual_claim_preview(token)
+    selected = select_manual_claim_plan(preview_raw, plan_id=plan_id)
+    verification = (captcha_verify_param or "").strip()
+    config = None
+    if not verification or not (captcha_region or "").strip():
+        config = fetch_captcha_config(token, require_valid=False)
+    if not verification:
+        if not interactive_verification:
+            return {
+                "success": False,
+                "captcha_required": True,
+                "plan": selected,
+                "captcha": {
+                    "enabled": config.get("enabled") if config else None,
+                    "region": config.get("region") if config else None,
+                    "prefix": config.get("prefix") if config else None,
+                    "scene_id": config.get("sceneId") if config else None,
+                },
+                "message": (
+                    "A fresh Aliyun verification is required. Retry with "
+                    "interactive_verification=true or provide captcha_verify_param."
+                ),
+            }
+        if not config or config.get("enabled") is False:
+            return {
+                "success": False,
+                "captcha_required": True,
+                "plan": selected,
+                "message": "ZCode's current CAPTCHA configuration is not usable for a manual claim.",
+            }
+        verification = obtain_fresh_verification(
+            config,
+            timeout_seconds=verification_timeout,
+        )
+
+    result = claim_manual_plan(
+        token,
+        plan_id=str(selected["plan_id"]),
+        captcha_verify_param=verification,
+        captcha_region=(
+            captcha_region
+            or (str(config.get("region") or "") if config else "")
+        ),
+    )
+    result["selected_plan"] = selected
+    if result.get("success"):
+        result["balance"] = summarize_billing_balance(fetch_billing_balance(token))
+    return result
 
 
 def summarize_billing_balance(body: dict) -> dict:
@@ -757,6 +991,29 @@ def main() -> int:
     parser.add_argument("--request-timeout", type=float, default=60.0)
     parser.add_argument("--verify-only", action="store_true")
     parser.add_argument("--balance", action="store_true", help="Fetch and print current Start Plan billing/quota balance.")
+    parser.add_argument(
+        "--claim-preview",
+        action="store_true",
+        help="List plans currently claimable from the ZCode Start Plan claim endpoint.",
+    )
+    parser.add_argument(
+        "--claim",
+        action="store_true",
+        help="Claim the best currently available GLM-5.3-Flash Start Plan grant.",
+    )
+    parser.add_argument(
+        "--claim-plan-id",
+        help="Claim this exact preview plan ID instead of auto-selecting the largest GLM-5.3-Flash grant.",
+    )
+    parser.add_argument(
+        "--captcha-verify-param",
+        help="Use an already-obtained fresh Aliyun CAPTCHA verification value.",
+    )
+    parser.add_argument(
+        "--claim-no-browser",
+        action="store_true",
+        help="Do not open the Aliyun verifier when --claim needs a fresh verification value.",
+    )
     parser.add_argument("--thinking-level", choices=["low", "high", "max"], default=None)
     parser.add_argument("--system", help="Override the client-sent system prompt for this request.")
     parser.add_argument("--system-file", help="Load the client-sent system prompt override from a UTF-8 text file.")
@@ -791,6 +1048,26 @@ def main() -> int:
         balance = summarize_billing_balance(fetch_billing_balance(token))
         print(json.dumps(balance, indent=2, ensure_ascii=False))
         return 0
+
+    if args.claim_preview:
+        preview = summarize_manual_claim_preview(fetch_manual_claim_preview(token))
+        print(json.dumps(preview, indent=2, ensure_ascii=False))
+        return 0
+
+    if args.claim:
+        result = claim_available_start_plan(
+            token,
+            plan_id=args.claim_plan_id,
+            captcha_verify_param=args.captcha_verify_param,
+            interactive_verification=not args.claim_no_browser,
+            verification_timeout=args.verification_timeout,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        if result.get("success"):
+            return 0
+        if result.get("captcha_required"):
+            return 3
+        return 1
 
     if explicit_config:
         config = {

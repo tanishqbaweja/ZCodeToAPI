@@ -1647,6 +1647,42 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, zcode_oauth_usage())
         elif path in {"/v1/zcode/balance", "/zcode/balance", "/v1/usage", "/usage"}:
             self.send_json(200, BRIDGE.balance())
+        elif path in {
+            "/v1/zcode/claim-preview",
+            "/v1/zcode/claim/preview",
+            "/zcode/claim-preview",
+        }:
+            if not self.auth_ok():
+                return
+            token = zcode.load_start_plan_token()
+            if not token:
+                self.send_json(
+                    401,
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "authentication_error",
+                            "message": "ZCode Start Plan credentials are unavailable.",
+                        },
+                    },
+                )
+                return
+            try:
+                preview = zcode.summarize_manual_claim_preview(
+                    zcode.fetch_manual_claim_preview(token)
+                )
+                self.send_json(200, preview)
+            except Exception as exc:
+                self.send_json(
+                    502,
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "zcode_claim_preview_error",
+                            "message": str(exc),
+                        },
+                    },
+                )
         elif path in {"/v1/models", "/models"}:
             model = os.environ.get("ZCODE_CLAUDE_BACKEND_MODEL", ZCODE_MODEL)
             self.send_json(
@@ -1665,17 +1701,87 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = urlparse(self.path).path
         request_id = next_request_id()
-        dump_json("request", request_id, {"path": path, "body": body})
+        dump_body = body
+        if path in {"/v1/zcode/claim", "/zcode/claim"}:
+            dump_body = json.loads(json.dumps(body))
+            if dump_body.get("captcha_verify_param"):
+                dump_body["captcha_verify_param"] = "<redacted>"
+        dump_json("request", request_id, {"path": path, "body": dump_body})
         try:
             if path in {"/v1/messages", "/messages"}:
                 self.messages(body, request_id)
             elif path in {"/v1/messages/count_tokens", "/messages/count_tokens"}:
                 prompt = message_prompt(body)
                 self.send_json(200, {"input_tokens": max(1, len(prompt) // 4)})
+            elif path in {"/v1/zcode/claim", "/zcode/claim"}:
+                self.zcode_claim(body, request_id)
             else:
                 self.send_json(404, {"type": "error", "error": {"type": "not_found_error", "message": f"Unknown endpoint: {path}"}})
         except Exception as exc:
             self.send_json(529, {"type": "error", "error": {"type": "overloaded_error", "message": str(exc)}})
+
+    def zcode_claim(self, body: dict[str, Any], request_id: str) -> None:
+        token = zcode.load_start_plan_token()
+        if not token:
+            self.send_json(
+                401,
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "authentication_error",
+                        "message": "ZCode Start Plan credentials are unavailable.",
+                    },
+                },
+            )
+            return
+        timeout_value = body.get("verification_timeout", 120)
+        try:
+            verification_timeout = float(timeout_value)
+        except (TypeError, ValueError):
+            self.send_json(
+                400,
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": "verification_timeout must be a number.",
+                    },
+                },
+            )
+            return
+        interactive_verification = bool(
+            body.get("auto_verify", body.get("interactive_verification", False))
+        )
+        if interactive_verification and self.client_address[0] not in {"127.0.0.1", "::1"}:
+            self.send_json(
+                400,
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": (
+                            "auto_verify is only allowed from a loopback client. "
+                            "Provide captcha_verify_param for remote callers."
+                        ),
+                    },
+                },
+            )
+            return
+        result = zcode.claim_available_start_plan(
+            token,
+            plan_id=str(body.get("plan_id") or "").strip() or None,
+            captcha_verify_param=str(body.get("captcha_verify_param") or "").strip() or None,
+            captcha_region=str(body.get("captcha_region") or "").strip() or None,
+            interactive_verification=interactive_verification,
+            verification_timeout=max(1.0, verification_timeout),
+        )
+        dump_json("claim-response", request_id, json.loads(json.dumps(result)))
+        if result.get("success"):
+            self.send_json(200, result)
+        elif result.get("captcha_required"):
+            self.send_json(428, result)
+        else:
+            self.send_json(409, result)
 
     def messages(self, body: dict[str, Any], request_id: str) -> None:
         prompt = message_prompt(body)

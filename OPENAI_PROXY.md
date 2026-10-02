@@ -109,12 +109,45 @@ Invoke-RestMethod `
 GET  /v1/models
 GET  /v1/models/{model}
 GET  /v1/zcode/balance
+GET  /v1/zcode/claim-preview
 GET  /v1/usage
 POST /v1/chat/completions
 POST /v1/responses
 POST /v1/completions
+POST /v1/zcode/claim
 GET  /health
 ```
+
+## Start Plan claim API
+
+`GET /v1/zcode/claim-preview` returns the plans currently claimable for the
+signed-in ZCode account. This is the same read-only preview used by the ZCode
+desktop client before it shows a Claim action.
+
+`POST /v1/zcode/claim` accepts:
+
+```json
+{
+  "plan_id": "optional exact preview plan id",
+  "captcha_verify_param": "optional fresh Aliyun verification value",
+  "captcha_region": "optional region override",
+  "interactive_verification": false,
+  "verification_timeout": 120
+}
+```
+
+When `plan_id` is omitted, ZCodeToAPI picks the largest currently claimable
+GLM-5.3-Flash grant from the live preview. When the CAPTCHA value is omitted
+and `interactive_verification` is false, the proxy returns HTTP 428 with
+`captcha_required: true`. On a local desktop, setting
+`interactive_verification: true` runs the same official Aliyun SDK flow used
+by ZCode in a small local browser page. The verifier attempts Aliyun's
+traceless flow automatically; user interaction is only needed if Aliyun
+escalates that attempt to a challenge. The ZCode desktop app does not need to
+be opened.
+
+The short-lived CAPTCHA verification value is redacted from proxy request
+dumps.
 
 ## Thinking level
 

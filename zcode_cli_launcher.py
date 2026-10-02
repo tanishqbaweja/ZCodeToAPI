@@ -536,6 +536,95 @@ def cmd_usage(args: argparse.Namespace) -> int:
     return print_usage_human(data)
 
 
+def claim_preview_snapshot() -> dict[str, Any] | None:
+    try:
+        zcode = zcode_client()
+        token = zcode.load_start_plan_token()
+        if not token:
+            return None
+        return zcode.summarize_manual_claim_preview(
+            zcode.fetch_manual_claim_preview(token)
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI diagnostic
+        return {"error": str(exc)}
+
+
+def cmd_claim_preview(args: argparse.Namespace) -> int:
+    data = claim_preview_snapshot()
+    if args.json:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+        return 0 if data and "error" not in data else 1
+    if not data:
+        print("No claim preview available. Keep local ZCode credentials or set ZCODE_START_PLAN_TOKEN.")
+        return 1
+    if "error" in data:
+        print("Unable to fetch claim preview: " + str(data["error"]))
+        return 1
+    plans = data.get("plans") or []
+    if not plans:
+        print("No ZCode Start Plan grants are currently claimable.")
+        return 0
+    print("Currently claimable ZCode Start Plan grants:")
+    for plan in plans:
+        print(f"- {plan.get('name') or plan.get('plan_id')} [{plan.get('plan_id')}]")
+        for entitlement in plan.get("entitlements") or []:
+            caps = ", ".join(entitlement.get("capabilities") or [])
+            print(
+                f"    {entitlement.get('show_name') or entitlement.get('entitlement_id')}: "
+                f"{_format_units(entitlement.get('grant_units'))} {entitlement.get('unit_type') or 'units'} "
+                f"| {caps} | period={entitlement.get('period') or 'unknown'}"
+            )
+    return 0
+
+
+def cmd_claim(args: argparse.Namespace) -> int:
+    zcode = zcode_client()
+    token = zcode.load_start_plan_token()
+    if not token:
+        print("ZCode Start Plan credentials are unavailable.")
+        return 1
+    try:
+        result = zcode.claim_available_start_plan(
+            token,
+            plan_id=args.plan_id,
+            captcha_verify_param=args.captcha_verify_param,
+            captcha_region=args.captcha_region,
+            interactive_verification=not args.no_browser,
+            verification_timeout=args.verification_timeout,
+        )
+    except Exception as exc:  # noqa: BLE001 - surface upstream claim failure
+        if args.json:
+            print(json.dumps({"success": False, "error": str(exc)}, indent=2, ensure_ascii=False))
+        else:
+            print("Claim failed: " + str(exc))
+        return 1
+
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    elif result.get("success"):
+        selected = result.get("selected_plan") or {}
+        print(
+            "Claim succeeded: "
+            + str(selected.get("name") or selected.get("plan_id") or "ZCode Start Plan grant")
+        )
+        for entitlement in selected.get("entitlements") or []:
+            print(
+                f"  {_format_units(entitlement.get('grant_units'))} "
+                f"{entitlement.get('unit_type') or 'units'} "
+                f"for {', '.join(entitlement.get('capabilities') or [])}"
+            )
+    elif result.get("captcha_required"):
+        print(str(result.get("message") or "Fresh Aliyun verification is required."))
+        return 3
+    else:
+        print(
+            f"Claim rejected (code={result.get('code')}): "
+            f"{result.get('message') or 'unknown upstream error'}"
+        )
+        return 1
+    return 0
+
+
 def print_usage_human(data: dict[str, Any] | None) -> int:
     if not data:
         print("No usage data available. Keep local ZCode credentials or set ZCODE_START_PLAN_TOKEN.")
@@ -1942,6 +2031,17 @@ def build_parser() -> argparse.ArgumentParser:
     u = sub.add_parser("usage", help="Show current ZCode usage/quota buckets")
     u.add_argument("--json", action="store_true")
     u.set_defaults(func=cmd_usage)
+    cp = sub.add_parser("claim-preview", help="Show ZCode Start Plan grants that are currently claimable")
+    cp.add_argument("--json", action="store_true")
+    cp.set_defaults(func=cmd_claim_preview)
+    cl = sub.add_parser("claim", help="Claim the best currently available ZCode Start Plan grant")
+    cl.add_argument("--plan-id", help="Claim an exact plan ID from claim-preview")
+    cl.add_argument("--captcha-verify-param", help="Use an already-obtained fresh Aliyun verification value")
+    cl.add_argument("--captcha-region", help="Override the CAPTCHA verification region header")
+    cl.add_argument("--verification-timeout", type=float, default=120.0)
+    cl.add_argument("--no-browser", action="store_true", help="Do not open the official Aliyun verifier")
+    cl.add_argument("--json", action="store_true")
+    cl.set_defaults(func=cmd_claim)
     r = sub.add_parser("run", help="Run codex, claude, or both")
     r.add_argument("target", choices=["codex", "claude", "both"])
     add_run_args(r)

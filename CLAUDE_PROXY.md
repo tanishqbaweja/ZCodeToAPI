@@ -73,10 +73,29 @@ GET  /health
 HEAD /api/hello
 GET  /v1/models
 GET  /v1/zcode/balance
+GET  /v1/zcode/claim-preview
 GET  /v1/usage
 POST /v1/messages
 POST /v1/messages/count_tokens
+POST /v1/zcode/claim
 ```
+
+## Start Plan claim API
+
+The Claude-compatible proxy exposes the same ZCode claim endpoints as the
+OpenAI-compatible proxy:
+
+```text
+GET  /v1/zcode/claim-preview
+POST /v1/zcode/claim
+```
+
+The preview endpoint discovers claimable plan IDs directly from ZCode. The
+claim endpoint can auto-select the largest current GLM-5.3-Flash grant, accepts
+an already-obtained Aliyun verification value, or can run the official Aliyun
+verification flow locally when `interactive_verification: true` is supplied.
+The ZCode desktop app does not need to be opened. Short-lived CAPTCHA values
+are redacted from proxy dumps.
 
 ## Thinking level
 

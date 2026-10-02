@@ -158,6 +158,32 @@ Both proxies expose current quota/balance:
 /v1/zcode/balance
 ```
 
+They also expose ZCode's manual Start Plan claim flow:
+
+```text
+GET  /v1/zcode/claim-preview
+POST /v1/zcode/claim
+```
+
+The preview endpoint discovers the currently claimable plan from ZCode instead
+of hardcoding a promotional plan ID. The claim endpoint accepts an optional
+`plan_id`; when omitted, it selects the largest currently claimable
+GLM-5.3-Flash grant. If a fresh Aliyun verification value is not supplied, the
+API returns `428` with `captcha_required: true`. For a local desktop caller,
+send `{"interactive_verification": true}` to run the official Aliyun
+verification flow without opening the ZCode application.
+
+The launcher exposes the same flow directly:
+
+```bat
+zcode-cli-launcher.cmd claim-preview
+zcode-cli-launcher.cmd claim
+```
+
+`claim` auto-discovers the currently available grant and opens only the
+official Aliyun verification page when verification is required. ZCode itself
+does not need to be opened.
+
 ## Codex launcher
 
 On Windows, the easiest Codex path is:
